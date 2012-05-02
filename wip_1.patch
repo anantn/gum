@@ -1,0 +1,369 @@
+diff --git a/content/media/nsIDOMMediaStream.idl b/content/media/nsIDOMMediaStream.idl
+--- a/content/media/nsIDOMMediaStream.idl
++++ b/content/media/nsIDOMMediaStream.idl
+@@ -1,12 +1,13 @@
+ /* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "nsISupports.idl"
+  
+-[scriptable, builtinclass, uuid(f37c2871-4cb7-4672-bb28-c2d601f7cc9e)]
++[scriptable, builtinclass, uuid(2d2d11fc-41ed-4556-b922-79a3aca64b27)]
+ interface nsIDOMMediaStream : nsISupports
+ {
++  void stop();
+   readonly attribute double currentTime;
+ };
+diff --git a/content/media/nsUserMedia.cpp b/content/media/nsUserMedia.cpp
+--- a/content/media/nsUserMedia.cpp
++++ b/content/media/nsUserMedia.cpp
+@@ -58,16 +58,35 @@ nsUserMedia::GetUserMedia(nsPIDOMWindow 
+   const JS::Value& val,
+   nsIDOMGetUserMediaSuccessCallback* success,
+   nsIDOMGetUserMediaErrorCallback* error,
+   nsIDOMCanvasRenderingContext2D* ctx)
+ {
+ 	// Implement permissions per *window
+   // Parse jsval& val
+ 
++  // Create MediaStream
++  nsDOMMediaStream *mStream = nsDOMMediaStream::CreateInputStream();
++  mInputStram = mStream->GetStream()->AsInputStream();
++  mRemoteMediaStream = nsDOMMediaStream::CreateInputStream();
++  mRemoteInputStream = mRemoteMediaStream->GetStream()->AsInputStream();
++  
++  // Enable video
++  mLocalInputStream->SetVideoEnabled(true);
++  mRemoteInputStream->SetVideoEnabled(true);
++  
++  // Disable audio ..since we need not have to do A/V sync from media graph
++  mLocalInputStream->SetAudioEnabled(false);
++  mRemoteInputStream->SetAudioEnabled(false);
++  std::cerr << " In Init () Local: " <<  mLocalMediaStream << std::endl;
++
++  nsCOMPtr<nsIDOMMediaStream> mLocalStream(mLocalMediaStream);
++  nsCOMPtr<nsIDOMMediaStream> mRemoteStream(mRemoteMediaStream);
++
++  NS_DispatchToMainThread(new nsWebrtcCallback(cb_, "STREAM", "", mLocalStream, mRemoteStream));
+   if (vSource == NULL) {
+     vSource = new nsUserMediaVideoSource();
+     if (!vSource) {
+       // Implement nsIDOMUserMediaERror
+       // error->onError();
+       return;
+     }
+   }
+@@ -81,48 +100,16 @@ nsUserMedia::GetUserMedia(nsPIDOMWindow 
+   if (ctx != NULL) {
+     fprintf(stderr, "GetUserMedia:: Canvas context is NON-NULL\n");
+     stream->StartWithCanvas(ctx);
+   }
+   return;
+ }
+ 
+ /********************************************************************
+-  nsUserMediaStream: nsIDOMUserMediaStream
+-********************************************************************/
+-NS_IMPL_ISUPPORTS1(nsUserMediaStream, nsIDOMUserMediaStream)
+-
+-nsUserMediaStream::nsUserMediaStream()
+-{ 
+-}
+-
+-nsUserMediaStream::~nsUserMediaStream()
+-{ 
+-}
+-
+-void
+-nsUserMediaStream::InitVideo(nsUserMediaVideoSource* src)
+-{
+-  vSource = src;
+-}
+-
+-NS_IMETHODIMP
+-nsUserMediaStream::StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx)
+-{
+-    fprintf(stderr, "UserMediaStream::StartWithCanvas\n");
+-    return vSource->StartWithCanvas(ctx);
+-}
+-
+-NS_IMETHODIMP
+-nsUserMediaStream::Stop()
+-{
+-    return vSource->Stop();
+-}
+-
+-/********************************************************************
+   nsUserMediaVideoSource
+ ********************************************************************/
+ nsUserMediaVideoSource::nsUserMediaVideoSource()
+ {
+   int error = 0;
+   channel = -1;
+ 
+   ptrViE = webrtc::VideoEngine::Create();
+@@ -246,19 +233,52 @@ nsUserMediaVideoSource::DeliverFrame(
+       canvas, width, height, rgb32, fsize
+     );
+     NS_DispatchToMainThread(render);
+   }
+ 
+   return 0;
+ }
+ 
+-// Make both of the following async with PRThread f.e.:
+-// https://github.com/mozilla/rainbow/blob/master/components/MediaRecorder.cpp#L655
++nsresult
++nsUserMediaVideoSource::Stop()
++{
++  int error = 0;
+ 
++  error = ptrViERender->StopRender(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::StopRender\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViERender->RemoveRenderer(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::RemoveRenderer\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViECapture->StopCapture(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::StopCapture\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViECapture->DisconnectCaptureDevice(channel);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::DisconnectCaptureDevice\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  ptrViERender->Release();
++  ptrViECapture->Release();
++
++  return NS_OK;
++}
++
++/* unused, for now
+ nsresult
+ nsUserMediaVideoSource::StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx)
+ {
+   canvas = ctx;
+   PR_CreateThread(
+     PR_SYSTEM_THREAD,
+     nsUserMediaVideoSource::StartWithCanvasThread, this,
+     PR_PRIORITY_NORMAL,
+@@ -308,43 +328,9 @@ nsUserMediaVideoSource::StartWithCanvasT
+   error = vs->ptrViERender->StartRender(vs->captureID);
+   if (error == -1) {
+     fprintf(stderr, "ERROR in ViERender::StartRender\n");
+     return;
+   }
+ 
+   return;
+ }
+-
+-nsresult
+-nsUserMediaVideoSource::Stop()
+-{
+-  int error = 0;
+-
+-  error = ptrViERender->StopRender(captureID);
+-  if (error == -1) {
+-    fprintf(stderr, "ERROR in ViERender::StopRender\n");
+-    return NS_ERROR_FAILURE;
+-  }
+-
+-  error = ptrViERender->RemoveRenderer(captureID);
+-  if (error == -1) {
+-    fprintf(stderr, "ERROR in ViERender::RemoveRenderer\n");
+-    return NS_ERROR_FAILURE;
+-  }
+-
+-  error = ptrViECapture->StopCapture(captureID);
+-  if (error == -1) {
+-    fprintf(stderr, "ERROR in ViECapture::StopCapture\n");
+-    return NS_ERROR_FAILURE;
+-  }
+-
+-  error = ptrViECapture->DisconnectCaptureDevice(channel);
+-  if (error == -1) {
+-    fprintf(stderr, "ERROR in ViECapture::DisconnectCaptureDevice\n");
+-    return NS_ERROR_FAILURE;
+-  }
+-
+-  ptrViERender->Release();
+-  ptrViECapture->Release();
+-
+-  return NS_OK;
+-}
++*/
+\ No newline at end of file
+diff --git a/content/media/nsUserMedia.h b/content/media/nsUserMedia.h
+--- a/content/media/nsUserMedia.h
++++ b/content/media/nsUserMedia.h
+@@ -35,16 +35,17 @@
+  * ***** END LICENSE BLOCK ***** */
+ 
+ #ifndef NSUSERMEDIA_H_
+ #define NSUSERMEDIA_H_
+ 
+ #include "nsIRunnable.h"
+ #include "nsPIDOMWindow.h"
+ #include "nsIDOMUserMedia.h"
++#include "nsIDOMMediaStream.h"
+ #include "nsIDOMCanvasRenderingContext2D.h"
+ 
+ #include "jsapi.h"
+ #include "prthread.h"
+ #include "nsMemory.h"
+ #include "nsCOMPtr.h"
+ #include "nsAutoPtr.h"
+ #include "nsThreadUtils.h"
+@@ -62,81 +63,64 @@ class nsUserMedia : public nsISupports
+ {
+ public:
+   NS_DECL_ISUPPORTS
+   nsUserMedia();
+ 
+   void GetUserMedia(
+     nsPIDOMWindow*, const JS::Value&,
+     nsIDOMGetUserMediaSuccessCallback*,
+-    nsIDOMGetUserMediaErrorCallback*,
+-    nsIDOMCanvasRenderingContext2D*
++    nsIDOMGetUserMediaErrorCallback*
+   );
+ 
+ protected:
+   nsUserMediaVideoSource *vSource;
+ 
+ private:
+   ~nsUserMedia();
+ 
+ };
+ 
+-class nsUserMediaStream : public nsIDOMUserMediaStream
+-{
+-public:
+-  NS_DECL_ISUPPORTS
+-  NS_DECL_NSIDOMUSERMEDIASTREAM
+-
+-  nsUserMediaStream();
+-  void InitVideo(nsUserMediaVideoSource*);
+-
+-protected:
+-  nsUserMediaVideoSource *vSource;
+-
+-private:
+-  ~nsUserMediaStream();
+-
+-};
+-
+ class nsUserMediaVideoSource : public webrtc::ExternalRenderer {
+ public:
+-  nsUserMediaVideoSource();
++  nsUserMediaVideoSource(mozilla::media::InputStream *aStream);
+   ~nsUserMediaVideoSource();
+-  nsresult StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx);
+   nsresult Stop();
+ 
+ protected:
+   int width;
+   int height;
+   int frames;
+   int channel;
+   int captureID;
+   webrtc::VideoEngine* ptrViE;
+   webrtc::ViEBase* ptrViEBase;
+   webrtc::ViECapture* ptrViECapture;
+   webrtc::ViERender* ptrViERender;
+   webrtc::CaptureCapability caps;
+ 
++  /* unused, for now
+   nsIDOMCanvasRenderingContext2D* canvas;
+   static void StartWithCanvasThread(void *data);
++  */
+ 
+   // ViEExternalRenderer
+   int FrameSizeChange(
+     unsigned int, unsigned int, unsigned int
+   );
+   int DeliverFrame(
+     unsigned char*, int, unsigned int
+   );
+ };
+ 
+ /* 
+  * Rendering on Canvas happens on the main thread as this runnable.
+  * This is not very performant, we should move to rendering inside a <video>
+  * so that Gecko can use hardware acceleration.
+- */
++ * unused, for now.
+ class CanvasRenderer : public nsRunnable {
+ public:
+   CanvasRenderer(
+     nsIDOMCanvasRenderingContext2D *pCtx, PRUint32 width, PRUint32 height,
+     nsAutoArrayPtr<PRUint8> &pData, PRUint32 pDataSize)
+     : m_pCtx(pCtx), m_width(width), m_height(height),
+         m_pData(pData), m_pDataSize(pDataSize) {}
+ 
+@@ -150,10 +134,11 @@ public:
+ private:
+   nsIDOMCanvasRenderingContext2D *m_pCtx;
+   PRUint32 m_width;
+   PRUint32 m_height;
+   nsAutoArrayPtr<PRUint8> m_pData;
+   PRUint32 m_pDataSize;
+ 
+ };
++*/
+ 
+ #endif /* NSUSERMEDIA_H_ */
+diff --git a/dom/interfaces/media/nsIDOMUserMedia.idl b/dom/interfaces/media/nsIDOMUserMedia.idl
+--- a/dom/interfaces/media/nsIDOMUserMedia.idl
++++ b/dom/interfaces/media/nsIDOMUserMedia.idl
+@@ -30,24 +30,17 @@
+  * decision by deleting the provisions above and replace them with the notice
+  * and other provisions required by the GPL or the LGPL. If you do not delete
+  * the provisions above, a recipient may use your version of this file under
+  * the terms of any one of the MPL, the GPL or the LGPL.
+  *
+  * ***** END LICENSE BLOCK ***** */
+ 
+ #include "domstubs.idl"
+-#include "nsIDOMCanvasRenderingContext2D.idl"
+-
+-[scriptable, uuid(2d2d11fc-41ed-4556-b922-79a3aca64b27)]
+-interface nsIDOMUserMediaStream : nsISupports
+-{
+-  void startWithCanvas(in nsIDOMCanvasRenderingContext2D ctx);
+-  void stop();
+-};
++#include "nsIDOMMediaStream.idl"
+ 
+ [scriptable, uuid(64334e6b-aaba-4d18-a35e-92239060fb8a)]
+ interface nsIDOMGetUserMediaError : nsISupports
+ {
+   const unsigned short UNKNOWN_ERROR = 0;
+   const unsigned short PERMISSION_DENIED = 1;
+   readonly attribute short code;
+ };
+@@ -64,11 +57,10 @@ interface nsIDOMGetUserMediaErrorCallbac
+   void onError(in nsIDOMGetUserMediaError error);
+ };
+ 
+ [scriptable, uuid(05083c6a-a35c-4988-ba73-a226540ea5db)]
+ interface nsIDOMGetUserMedia : nsISupports
+ {
+   void getUserMedia(in jsval options,
+     in nsIDOMGetUserMediaSuccessCallback success,
+-    [optional] in nsIDOMGetUserMediaErrorCallback error,
+-    [optional] in nsIDOMCanvasRenderingContext2D ctx);
++    [optional] in nsIDOMGetUserMediaErrorCallback error);
+ };
