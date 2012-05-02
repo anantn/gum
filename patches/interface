@@ -1,24 +1,34 @@
 # HG changeset patch
-# Parent 85ff25c6685740824540d4a3997121ffa11357f2
+# Parent ee1786d10b16b7a447d8dabae18174f668ce7d48
 # User Anant Narayanan <anant@kix.in>
 XPCOM interface for nsIMediaEngine
 
 diff --git a/dom/interfaces/media/Makefile.in b/dom/interfaces/media/Makefile.in
---- a/dom/interfaces/media/Makefile.in
+new file mode 100644
+--- /dev/null
 +++ b/dom/interfaces/media/Makefile.in
-@@ -43,11 +43,12 @@ VPATH          = @srcdir@
- include $(DEPTH)/config/autoconf.mk
- 
- MODULE         = dom
- XPIDL_MODULE   = dom_media
- GRE_MODULE     = 1
- 
- XPIDLSRCS = \
-             nsIDOMUserMedia.idl \
+@@ -0,0 +1,20 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this file,
++# You can obtain one at http://mozilla.org/MPL/2.0/.
++
++DEPTH          = ../../..
++topsrcdir      = @top_srcdir@
++srcdir         = @srcdir@
++VPATH          = @srcdir@
++
++include $(DEPTH)/config/autoconf.mk
++
++MODULE         = dom
++XPIDL_MODULE   = dom_media
++GRE_MODULE     = 1
++
++XPIDLSRCS = \
 +            nsIMediaEngine.idl \
-             $(NULL)
- 
- include $(topsrcdir)/config/rules.mk
++            $(NULL)
++
++include $(topsrcdir)/config/rules.mk
+\ No newline at end of file
 diff --git a/dom/interfaces/media/nsIMediaEngine.idl b/dom/interfaces/media/nsIMediaEngine.idl
 new file mode 100644
 --- /dev/null
