@@ -1,0 +1,335 @@
+# HG changeset patch
+# Parent e9b28aceed0c53f4ded8cbd65bd5c3ccbab6e155
+
+diff --git a/content/media/Makefile.in b/content/media/Makefile.in
+--- a/content/media/Makefile.in
++++ b/content/media/Makefile.in
+@@ -57,6 +57,7 @@ EXPORTS = \
+   nsBuiltinDecoder.h \
+   nsBuiltinDecoderStateMachine.h \
+   nsBuiltinDecoderReader.h \
++  nsDOMMedia.h \
+   nsDOMMediaStream.h \
+   nsMediaDecoder.h \
+   nsMediaCache.h \
+@@ -73,7 +74,9 @@ CPPSRCS = \
+   nsBuiltinDecoder.cpp \
+   nsBuiltinDecoderStateMachine.cpp \
+   nsBuiltinDecoderReader.cpp \
++  nsDOMMediaModule.cpp \
+   nsDOMMediaStream.cpp \
++  nsDOMGetUserMedia.cpp \
+   nsMediaDecoder.cpp \
+   nsMediaCache.cpp \
+   StreamBuffer.cpp \
+diff --git a/content/media/nsDOMMedia.cpp b/content/media/nsDOMMedia.cpp
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsDOMMedia.cpp
+@@ -0,0 +1,56 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/* ***** BEGIN LICENSE BLOCK *****
++ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
++ *
++ * The contents of this file are subject to the Mozilla Public License Version
++ * 1.1 (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ * http://www.mozilla.org/MPL/
++ *
++ * Software distributed under the License is distributed on an "AS IS" basis,
++ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++ * for the specific language governing rights and limitations under the
++ * License.
++ *
++ * The Original Code is WebRTC.
++ *
++ * The Initial Developer of the Original Code is Mozilla Foundation.
++ * Portions created by the Initial Developer are Copyright (C) 2012
++ * the Initial Developer. All Rights Reserved.
++ *
++ * Contributor(s):
++ *   Anant Narayanan <anant@mozilla.com>
++ *
++ * Alternatively, the contents of this file may be used under the terms of
++ * either of the GNU General Public License Version 2 or later (the "GPL"),
++ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * in which case the provisions of the GPL or the LGPL are applicable instead
++ * of those above. If you wish to allow use of your version of this file only
++ * under the terms of either the GPL or the LGPL, and not to allow others to
++ * use your version of this file under the terms of the MPL, indicate your
++ * decision by deleting the provisions above and replace them with the notice
++ * and other provisions required by the GPL or the LGPL. If you do not delete
++ * the provisions above, a recipient may use your version of this file under
++ * the terms of any one of the MPL, the GPL or the LGPL.
++ *
++ * ***** END LICENSE BLOCK ***** */
++
++#include "nsDOMMedia.h"
++#include "nsIClassInfoImpl.h"
++
++nsDOMGetUserMedia::nsDOMGetUserMedia()
++{
++}
++
++nsDOMGetUserMedia::~nsDOMGetUserMedia()
++{
++}
++
++NS_IMPL_CLASSINFO(nsDOMGetUserMedia, NULL, 0, NS_GET_USER_MEDIA_CID)
++NS_IMPL_ISUPPORTS1_CI(nsDOMGetUserMedia, nsIDOMGetUserMedia)
++
++NS_IMETHODIMP
++nsDOMGetUserMedia::GetUserMedia(char** aValue)
++{
++    return NS_OK;
++}
+diff --git a/content/media/nsDOMMedia.h b/content/media/nsDOMMedia.h
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsDOMMedia.h
+@@ -0,0 +1,32 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef NSDOMMEDIA_H_
++#define NSDOMMEDIA_H_
++
++#include "nsIDOMMedia.h"
++
++#include "video_engine/include/vie_base.h"
++#include "video_engine/include/vie_codec.h"
++#include "video_engine/include/vie_render.h"
++#include "video_engine/include/vie_capture.h"
++
++#define NS_GET_USER_MEDIA_CID \
++{ 0x3a9a5cab, 0xa1ca, 0x4172, {0xa9, 0x06, 0xde, 0x3e, 0x8a, 0xad, 0xfb, 0x06 } }
++#define NS_GET_USER_MEDIA_CONTRACTID "@mozilla.org/getusermedia;1"
++
++class nsDOMGetUserMedia : public mozIDOMGetUserMedia
++{
++public:
++  nsDOMGetUserMedia();
++
++  NS_DECL_ISUPPORTS
++  NS_DECL_MOZIDOMGETUSERMEDIA
++
++private:
++  ~nsDOMMediaStream();
++};
++
++#endif /* NSDOMMEDIA_H_ */
+diff --git a/content/media/nsDOMMediaModule.cpp b/content/media/nsDOMMediaModule.cpp
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsDOMMediaModule.cpp
+@@ -0,0 +1,70 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/* ***** BEGIN LICENSE BLOCK *****
++ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
++ *
++ * The contents of this file are subject to the Mozilla Public License Version
++ * 1.1 (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ * http://www.mozilla.org/MPL/
++ *
++ * Software distributed under the License is distributed on an "AS IS" basis,
++ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++ * for the specific language governing rights and limitations under the
++ * License.
++ *
++ * The Original Code is WebRTC.
++ *
++ * The Initial Developer of the Original Code is
++ * Netscape Communications Corporation.
++ * Portions created by the Initial Developer are Copyright (C) 2012
++ * the Initial Developer. All Rights Reserved.
++ *
++ * Contributor(s):
++ *   Anant Narayanan <anant@mozilla.com>
++ *
++ * Alternatively, the contents of this file may be used under the terms of
++ * either of the GNU General Public License Version 2 or later (the "GPL"),
++ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * in which case the provisions of the GPL or the LGPL are applicable instead
++ * of those above. If you wish to allow use of your version of this file only
++ * under the terms of either the GPL or the LGPL, and not to allow others to
++ * use your version of this file under the terms of the MPL, indicate your
++ * decision by deleting the provisions above and replace them with the notice
++ * and other provisions required by the GPL or the LGPL. If you do not delete
++ * the provisions above, a recipient may use your version of this file under
++ * the terms of any one of the MPL, the GPL or the LGPL.
++ *
++ * ***** END LICENSE BLOCK ***** */
++
++#include "mozilla/ModuleUtils.h"
++#include "nsIClassInfoImpl.h"
++
++#include "nsDOMMedia.h"
++
++NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMGetUserMedia)
++
++NS_DEFINE_NAMED_CID(NS_GET_USER_MEDIA_CID);
++
++static const mozilla::Module::CIDEntry kDOMMediaCIDs[] = {
++    { &kNS_GET_USER_MEDIA_CID, false, NULL, nsDOMGetUserMediaConstructor },
++    { NULL }
++};
++
++static const mozilla::Module::ContractIDEntry kDOMMediaContracts[] = {
++    { NS_GET_USER_MEDIA_CONTRACTID, &kNS_GET_USER_MEDIA_CID },
++    { NULL }
++};
++
++static const mozilla::Module::CategoryEntry kDOMMediaCategories[] = {
++    { "JavaScript-navigator-property", "media", NS_GET_USER_MEDIA_CONTRACTID },
++    { NULL }
++};
++
++static const mozilla::Module kDOMMediaModule = {
++    mozilla::Module::kVersion,
++    kDOMMediaCIDs,
++    kDOMMediaContracts,
++    kDOMMediaCategories
++};
++
++NSMODULE_DEFN(nsDOMMediaModule) = &kDOMMediaModule;
+diff --git a/dom/Makefile.in b/dom/Makefile.in
+--- a/dom/Makefile.in
++++ b/dom/Makefile.in
+@@ -66,6 +66,7 @@ DIRS = \
+   interfaces/notification \
+   interfaces/svg \
+   interfaces/smil \
++  interfaces/media \
+   $(NULL)
+ 
+ ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+diff --git a/dom/interfaces/media/Makefile.in b/dom/interfaces/media/Makefile.in
+new file mode 100644
+--- /dev/null
++++ b/dom/interfaces/media/Makefile.in
+@@ -0,0 +1,53 @@
++# ***** BEGIN LICENSE BLOCK *****
++# Version: MPL 1.1/GPL 2.0/LGPL 2.1
++#
++# The contents of this file are subject to the Mozilla Public License Version
++# 1.1 (the "License"); you may not use this file except in compliance with
++# the License. You may obtain a copy of the License at
++# http://www.mozilla.org/MPL/
++#
++# Software distributed under the License is distributed on an "AS IS" basis,
++# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++# for the specific language governing rights and limitations under the
++# License.
++#
++# The Original Code is WebRTC.
++#
++# The Initial Developer of the Original Code is Mozilla Foundation
++# Portions created by the Initial Developer are Copyright (C) 2012
++# the Initial Developer. All Rights Reserved.
++#
++# Contributor(s):
++#  Anant Narayanan <anant@mozilla.com>
++#
++# Alternatively, the contents of this file may be used under the terms of
++# either the GNU General Public License Version 2 or later (the "GPL"), or
++# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++# in which case the provisions of the GPL or the LGPL are applicable instead
++# of those above. If you wish to allow use of your version of this file only
++# under the terms of either the GPL or the LGPL, and not to allow others to
++# use your version of this file under the terms of the MPL, indicate your
++# decision by deleting the provisions above and replace them with the notice
++# and other provisions required by the GPL or the LGPL. If you do not delete
++# the provisions above, a recipient may use your version of this file under
++# the terms of any one of the MPL, the GPL or the LGPL.
++#
++# ***** END LICENSE BLOCK *****
++
++
++DEPTH          = ../../..
++topsrcdir      = @top_srcdir@
++srcdir         = @srcdir@
++VPATH          = @srcdir@
++
++include $(DEPTH)/config/autoconf.mk
++
++MODULE         = dom
++XPIDL_MODULE   = dom_media
++GRE_MODULE     = 1
++
++XPIDLSRCS = \
++            nsIDOMMedia.idl \
++            $(NULL)
++
++include $(topsrcdir)/config/rules.mk
+diff --git a/dom/interfaces/media/nsIDOMMedia.idl b/dom/interfaces/media/nsIDOMMedia.idl
+new file mode 100644
+--- /dev/null
++++ b/dom/interfaces/media/nsIDOMMedia.idl
+@@ -0,0 +1,64 @@
++/* ***** BEGIN LICENSE BLOCK *****
++ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
++ *
++ * The contents of this file are subject to the Mozilla Public License Version
++ * 1.1 (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ * http://www.mozilla.org/MPL/
++ *
++ * Software distributed under the License is distributed on an "AS IS" basis,
++ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++ * for the specific language governing rights and limitations under the
++ * License.
++ *
++ * The Original Code is WebRTC.
++ *
++ * The Initial Developer of the Original Code is Mozilla Foundation
++ * Portions created by the Initial Developer are Copyright (C) 2012
++ * the Initial Developer. All Rights Reserved.
++ *
++ * Contributor(s):
++ *  Anant Narayanan <anant@mozilla.com>
++ *
++ * Alternatively, the contents of this file may be used under the terms of
++ * either the GNU General Public License Version 2 or later (the "GPL"), or
++ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * in which case the provisions of the GPL or the LGPL are applicable instead
++ * of those above. If you wish to allow use of your version of this file only
++ * under the terms of either the GPL or the LGPL, and not to allow others to
++ * use your version of this file under the terms of the MPL, indicate your
++ * decision by deleting the provisions above and replace them with the notice
++ * and other provisions required by the GPL or the LGPL. If you do not delete
++ * the provisions above, a recipient may use your version of this file under
++ * the terms of any one of the MPL, the GPL or the LGPL.
++ *
++ * ***** END LICENSE BLOCK ***** */
++
++#include "domstubs.idl"
++
++[scriptable, uuid(64334e6b-aaba-4d18-a35e-92239060fb8a)]
++interface mozIDOMGetUserMediaError : nsISupports
++{
++  const unsigned short PERMISSION_DENIED = 1;
++  readonly attribute short code;
++};
++
++[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
++interface mozIDOMGetUserMediaSuccessCallback : nsISupports
++{
++  void handleEvent();
++};
++
++[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
++interface mozIDOMGetUserMediaErrorCallback : nsISupports
++{
++  void handleEvent(in mozIDOMGetUserMediaError error);
++};
++
++[scriptable, uuid(05083c6a-a35c-4988-ba73-a226540ea5db)]
++interface mozIDOMGetUserMedia : nsISupports
++{
++  void getUserMedia(in jsval options,
++    in mozIDOMGetUserMediaSuccessCallback success,
++    [optional] in mozIDOMGetUserMediaErrorCallback error);
++};

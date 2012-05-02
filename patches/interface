@@ -1,0 +1,125 @@
+# HG changeset patch
+# Parent 85ff25c6685740824540d4a3997121ffa11357f2
+# User Anant Narayanan <anant@kix.in>
+XPCOM interface for nsIMediaEngine
+
+diff --git a/dom/interfaces/media/Makefile.in b/dom/interfaces/media/Makefile.in
+--- a/dom/interfaces/media/Makefile.in
++++ b/dom/interfaces/media/Makefile.in
+@@ -43,11 +43,12 @@ VPATH          = @srcdir@
+ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE         = dom
+ XPIDL_MODULE   = dom_media
+ GRE_MODULE     = 1
+ 
+ XPIDLSRCS = \
+             nsIDOMUserMedia.idl \
++            nsIMediaEngine.idl \
+             $(NULL)
+ 
+ include $(topsrcdir)/config/rules.mk
+diff --git a/dom/interfaces/media/nsIMediaEngine.idl b/dom/interfaces/media/nsIMediaEngine.idl
+new file mode 100644
+--- /dev/null
++++ b/dom/interfaces/media/nsIMediaEngine.idl
+@@ -0,0 +1,99 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/.
++ */
++
++#include "nsISupports.idl"
++
++[scriptable, uuid(35c2d704-dc5e-4de1-a7ac-002662626347)]
++interface nsIMediaSourceError : nsISupports
++{
++  const unsigned short UNKNOWN_ERROR = 0;
++  readonly attribute short code;
++};
++
++[scriptable, function, uuid(1a76645c-dee8-415a-b623-3900251b2dfb)]
++interface nsIMediaSourceSuccessCallback : nsISupports
++{
++  void onSuccess(in jsval caps);  
++};
++
++[scriptable, function, uuid(76d68404-daf7-4755-8073-0cf2abbf30c1)]
++interface nsIMediaSourceDeviceSuccessCallback : nsISupports
++{
++  void onSuccess();  
++};
++
++[scriptable, function, uuid(2c0b7d34-d74a-4bad-94c1-5d2dda32a26e)]
++interface nsIMediaSourceErrorCallback : nsISupports
++{
++  void onError(in nsIMediaSourceError error);  
++};
++
++[scriptable, uuid(e9f89c36-5eb1-4b67-96a8-289e64a47456)]
++interface nsIMediaSource : nsISupports
++{
++  readonly attribute string name;
++  readonly attribute string uuid;
++
++  void getCapabilities(
++    in nsIMediaSourceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++
++  void setCapabilities(
++    in jsval caps,
++    in nsIMediaSourceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++
++  void allocate(
++    in nsIMediaSourceDeviceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++
++  void release(
++    in nsIMediaSourceDeviceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++};
++
++[scriptable, uuid(891401ad-c6cf-4192-93ce-72b855570033)]
++interface nsIMediaVideoStrean : nsISupports
++{
++};
++
++[scriptable, function, uuid(ffa40e1b-0a84-4eb7-bf5f-c8f7ead8d7e8)]
++interface nsIMediaVideoSourceSuccessCallback : nsISupports
++{
++  void onSuccess(in nsIMediaVideoStream stream);  
++};
++
++[scriptable, uuid(a90fa8fe-b102-4c30-96f4-3a28f38a173f)]
++interface nsIMediaVideoSource : nsIMediaSource
++{
++  void start(
++    in nsIMediaVideoSourceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++};
++
++[scriptable, uuid(ea143087-8332-4438-af7b-ccc24a840976)]
++interface nsIMediaAudioStrean : nsISupports
++{
++};
++
++[scriptable, function, uuid(d4466013-c92e-4471-b4b1-5e82d73657a6)]
++interface nsIMediaAudioSourceSuccessCallback : nsISupports
++{
++  void onSuccess(in nsIMediaAudioStream stream);  
++};
++
++[scriptable, uuid(ab41e297-e9e4-4c59-a0a4-e19a4a029a53)]
++interface nsIMediaAudioSource : nsIMediaSource
++{
++  void start(
++    in nsIMediaAudioSourceSuccessCallback success,
++    in nsIMediaSourceErrorCallback error
++  );
++};
