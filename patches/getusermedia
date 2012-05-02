@@ -1,33 +1,66 @@
 # HG changeset patch
-# Parent e9b28aceed0c53f4ded8cbd65bd5c3ccbab6e155
-
+# Parent a09014357391d8db9fd1824dfc456ab1ad7aec42
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -57,6 +57,7 @@ EXPORTS = \
+@@ -55,30 +55,34 @@ EXPORTS = \
+   MediaResource.h \
+   nsAudioAvailableEventManager.h \
    nsBuiltinDecoder.h \
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
-+  nsDOMMedia.h \
    nsDOMMediaStream.h \
    nsMediaDecoder.h \
    nsMediaCache.h \
-@@ -73,7 +74,9 @@ CPPSRCS = \
++  nsUserMedia.h \
++  nsUserMediaConvert.h \
+   StreamBuffer.h \
+   TimeVarying.h \
+   VideoFrameContainer.h \
+   VideoUtils.h \
+   $(NULL)
+ 
+ CPPSRCS = \
+   GraphManager.cpp \
+   MediaResource.cpp \
+   nsAudioAvailableEventManager.cpp \
    nsBuiltinDecoder.cpp \
    nsBuiltinDecoderStateMachine.cpp \
    nsBuiltinDecoderReader.cpp \
-+  nsDOMMediaModule.cpp \
    nsDOMMediaStream.cpp \
-+  nsDOMGetUserMedia.cpp \
++  nsUserMedia.cpp \
++  nsUserMediaConvert.cpp \
    nsMediaDecoder.cpp \
    nsMediaCache.cpp \
    StreamBuffer.cpp \
-diff --git a/content/media/nsDOMMedia.cpp b/content/media/nsDOMMedia.cpp
+   VideoFrameContainer.cpp \
+   VideoUtils.cpp \
+   $(NULL)
+ 
+ ifdef MOZ_SYDNEYAUDIO
+@@ -110,16 +114,17 @@ endif
+ 
+ ifdef ENABLE_TESTS
+ PARALLEL_DIRS += test
+ endif
+ 
+ FORCE_STATIC_LIB = 1
+ 
+ include $(topsrcdir)/config/config.mk
++include $(topsrcdir)/media/webrtc/webrtc-config.mk
+ include $(topsrcdir)/ipc/chromium/chromium-config.mk
+ include $(topsrcdir)/config/rules.mk
+ 
+ INCLUDES += \
+   -I$(srcdir)/../base/src \
+   -I$(srcdir)/../html/content/src \
+   $(NULL)
+ 
+diff --git a/content/media/nsUserMedia.cpp b/content/media/nsUserMedia.cpp
 new file mode 100644
 --- /dev/null
-+++ b/content/media/nsDOMMedia.cpp
-@@ -0,0 +1,56 @@
-+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++++ b/content/media/nsUserMedia.cpp
+@@ -0,0 +1,350 @@
 +/* ***** BEGIN LICENSE BLOCK *****
 + * Version: MPL 1.1/GPL 2.0/LGPL 2.1
 + *
@@ -41,18 +74,18 @@ new file mode 100644
 + * for the specific language governing rights and limitations under the
 + * License.
 + *
-+ * The Original Code is WebRTC.
++ * The Original Code is Mozilla code.
 + *
-+ * The Initial Developer of the Original Code is Mozilla Foundation.
++ * The Initial Developer of the Original Code is the Mozilla Foundation.
 + * Portions created by the Initial Developer are Copyright (C) 2012
 + * the Initial Developer. All Rights Reserved.
 + *
 + * Contributor(s):
-+ *   Anant Narayanan <anant@mozilla.com>
++ *  Anant Narayanan <anant@kix.in>
 + *
 + * Alternatively, the contents of this file may be used under the terms of
-+ * either of the GNU General Public License Version 2 or later (the "GPL"),
-+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * either the GNU General Public License Version 2 or later (the "GPL"), or
++ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 + * in which case the provisions of the GPL or the LGPL are applicable instead
 + * of those above. If you wish to allow use of your version of this file only
 + * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -64,68 +97,988 @@ new file mode 100644
 + *
 + * ***** END LICENSE BLOCK ***** */
 +
-+#include "nsDOMMedia.h"
-+#include "nsIClassInfoImpl.h"
++#include "stdio.h"
++#include "nsUserMedia.h"
 +
-+nsDOMGetUserMedia::nsDOMGetUserMedia()
++/********************************************************************
++  nsUserMedia: nsIDOMUserMedia
++********************************************************************/
++NS_IMPL_ISUPPORTS0(nsUserMedia)
++nsUserMedia::nsUserMedia()
 +{
++  vSource = NULL;
 +}
 +
-+nsDOMGetUserMedia::~nsDOMGetUserMedia()
++nsUserMedia::~nsUserMedia()
 +{
++  if (vSource != NULL) {
++    delete vSource;
++  }
 +}
 +
-+NS_IMPL_CLASSINFO(nsDOMGetUserMedia, NULL, 0, NS_GET_USER_MEDIA_CID)
-+NS_IMPL_ISUPPORTS1_CI(nsDOMGetUserMedia, nsIDOMGetUserMedia)
++void
++nsUserMedia::GetUserMedia(nsPIDOMWindow *window,
++  const JS::Value& val,
++  nsIDOMGetUserMediaSuccessCallback* success,
++  nsIDOMGetUserMediaErrorCallback* error,
++  nsIDOMCanvasRenderingContext2D* ctx)
++{
++	// Implement permissions per *window
++  // Parse jsval& val
++
++  if (vSource == NULL) {
++    vSource = new nsUserMediaVideoSource();
++    if (!vSource) {
++      // Implement nsIDOMUserMediaERror
++      // error->onError();
++      return;
++    }
++  }
++
++  nsUserMediaStream *stream = new nsUserMediaStream();
++  stream->InitVideo(vSource);
++  nsCOMPtr<nsIDOMUserMediaStream> mStream(stream);
++  success->OnSuccess(mStream);
++
++  // Hack
++  if (ctx != NULL) {
++    fprintf(stderr, "GetUserMedia:: Canvas context is NON-NULL\n");
++    stream->StartWithCanvas(ctx);
++  }
++  return;
++}
++
++/********************************************************************
++  nsUserMediaStream: nsIDOMUserMediaStream
++********************************************************************/
++NS_IMPL_ISUPPORTS1(nsUserMediaStream, nsIDOMUserMediaStream)
++
++nsUserMediaStream::nsUserMediaStream()
++{ 
++}
++
++nsUserMediaStream::~nsUserMediaStream()
++{ 
++}
++
++void
++nsUserMediaStream::InitVideo(nsUserMediaVideoSource* src)
++{
++  vSource = src;
++}
 +
 +NS_IMETHODIMP
-+nsDOMGetUserMedia::GetUserMedia(char** aValue)
++nsUserMediaStream::StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx)
 +{
-+    return NS_OK;
++    fprintf(stderr, "UserMediaStream::StartWithCanvas\n");
++    return vSource->StartWithCanvas(ctx);
 +}
-diff --git a/content/media/nsDOMMedia.h b/content/media/nsDOMMedia.h
++
++NS_IMETHODIMP
++nsUserMediaStream::Stop()
++{
++    return vSource->Stop();
++}
++
++/********************************************************************
++  nsUserMediaVideoSource
++********************************************************************/
++nsUserMediaVideoSource::nsUserMediaVideoSource()
++{
++  int error = 0;
++  channel = -1;
++
++  ptrViE = webrtc::VideoEngine::Create();
++  if (ptrViE == NULL) {
++    fprintf(stderr, "ERROR in VideoEngine::Create\n");
++    return;
++  }
++
++  ptrViEBase = webrtc::ViEBase::GetInterface(ptrViE);
++  if (ptrViEBase == NULL) {
++    fprintf(stderr, "ERROR in VideoEngine::GetInterface\n");
++    return;
++  }
++
++  error = ptrViEBase->Init();
++  if (error == -1) {
++    fprintf(stderr, "ERROR in VideoEngine::Init\n");
++    return;
++  }
++
++  error = ptrViEBase->CreateChannel(channel);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in VideoEngine::CreateChannel\n");
++    return;
++  }
++
++  // Get first available device
++  ptrViECapture = webrtc::ViECapture::GetInterface(ptrViE);
++  if (ptrViEBase == NULL) {
++    fprintf(stderr, "ERROR in ViECapture::GetInterface\n");
++    return;
++  }
++
++  int num = ptrViECapture->NumberOfCaptureDevices();
++  if (num <= 0) {
++    fprintf(stderr, "ERROR no video devices found\n");
++    return;
++  } else {
++    fprintf(stderr, "GetUserMedia:: Found %d devices!\n", num);
++  }
++
++  const unsigned int KMaxDeviceNameLength = 128;
++  const unsigned int KMaxUniqueIdLength = 256;
++  char deviceName[KMaxDeviceNameLength];
++  memset(deviceName, 0, KMaxDeviceNameLength);
++  char uniqueId[KMaxUniqueIdLength];
++  memset(uniqueId, 0, KMaxUniqueIdLength);
++  
++  error = ptrViECapture->GetCaptureDevice(
++    0, deviceName, KMaxDeviceNameLength, uniqueId, KMaxUniqueIdLength
++  );
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::GetCaptureDevice\n");
++    return;
++  }
++
++  // Set to third capability
++  error = ptrViECapture->GetCaptureCapability(
++    uniqueId, KMaxUniqueIdLength, 2, caps
++  );
++
++  captureID = 0;
++  error = ptrViECapture->AllocateCaptureDevice(
++    uniqueId, KMaxUniqueIdLength, captureID
++  );
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ptrViECapture::AllocateCaptureDevice\n");
++    return;
++  }
++}
++
++nsUserMediaVideoSource::~nsUserMediaVideoSource()
++{
++  int error = 0;
++
++  error = ptrViECapture->ReleaseCaptureDevice(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ptrViECapture::ReleaseCaptureDevice\n");
++  }
++
++  error = ptrViEBase->DeleteChannel(channel);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ptrViECapture::DeleteChannel\n");
++  }
++
++  ptrViECapture->Release();
++  ptrViEBase->Release();
++
++  if (webrtc::VideoEngine::Delete(ptrViE) == false) {
++    fprintf(stderr, "ERROR in VideoEngine::Delete\n");
++  }
++}
++
++int
++nsUserMediaVideoSource::FrameSizeChange(
++  unsigned int w, unsigned int h, unsigned int streams)
++{
++  fprintf(stderr, "Got FrameSizeChange: %d %d\n", w, h);
++  width = w;
++  height = h;
++  return -1;
++}
++
++int
++nsUserMediaVideoSource::DeliverFrame(
++  unsigned char* buffer, int size, unsigned int time)
++{
++  // Paint to canvas
++  fprintf(stderr, "Got frame of size: %d\n", size);
++
++  int fsize = width * height * 4;
++  if (canvas && fsize != 0) {
++    // Convert i420 to rgb32
++    // Use h/w accelerated optimized function to do this
++    nsAutoArrayPtr<PRUint8> rgb32(new PRUint8[fsize]);
++    I420toRGB32(width, height,
++      (const char *)buffer, (char *)rgb32.get()
++    );
++
++    nsCOMPtr<nsIRunnable> render = new CanvasRenderer(
++      canvas, width, height, rgb32, fsize
++    );
++    NS_DispatchToMainThread(render);
++  }
++
++  return 0;
++}
++
++// Make both of the following async with PRThread f.e.:
++// https://github.com/mozilla/rainbow/blob/master/components/MediaRecorder.cpp#L655
++
++nsresult
++nsUserMediaVideoSource::StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx)
++{
++  canvas = ctx;
++  PR_CreateThread(
++    PR_SYSTEM_THREAD,
++    nsUserMediaVideoSource::StartWithCanvasThread, this,
++    PR_PRIORITY_NORMAL,
++    PR_GLOBAL_THREAD,
++    PR_JOINABLE_THREAD, 0
++  );
++  return NS_OK;
++}
++
++void
++nsUserMediaVideoSource::StartWithCanvasThread(void *data)
++{
++  nsUserMediaVideoSource *vs = static_cast<nsUserMediaVideoSource*>(data);
++  fprintf(stderr, "UserMediaVideoSource::StartWithCanvas\n");
++
++  int error = 0;
++  error = vs->ptrViECapture->ConnectCaptureDevice(vs->captureID, vs->channel);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::ConnectCaptureDevice\n");
++    return;
++  }
++
++  fprintf(stderr, "UserMediaVideoSource::StartWithCanvas -> ConnectCaptureDevice done\n");
++
++  error = vs->ptrViECapture->StartCapture(vs->captureID, vs->caps);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::StartCapture\n");
++    return;
++  }
++
++  fprintf(stderr, "UserMediaVideoSource::StartWithCanvas -> StartCapture done\n");
++
++  vs->ptrViERender = webrtc::ViERender::GetInterface(vs->ptrViE);
++  if (vs->ptrViERender == NULL) {
++    fprintf(stderr, "ERROR in ViERender::GetInterface\n");
++    return;
++  }
++
++  error = vs->ptrViERender->AddRenderer(vs->captureID, webrtc::kVideoI420, vs);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::AddRenderer\n");
++    return;
++  }
++
++  fprintf(stderr, "UserMediaVideoSource::StartWithCanvas -> AddRenderer done\n");
++
++  error = vs->ptrViERender->StartRender(vs->captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::StartRender\n");
++    return;
++  }
++
++  return;
++}
++
++nsresult
++nsUserMediaVideoSource::Stop()
++{
++  int error = 0;
++
++  error = ptrViERender->StopRender(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::StopRender\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViERender->RemoveRenderer(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViERender::RemoveRenderer\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViECapture->StopCapture(captureID);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::StopCapture\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  error = ptrViECapture->DisconnectCaptureDevice(channel);
++  if (error == -1) {
++    fprintf(stderr, "ERROR in ViECapture::DisconnectCaptureDevice\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  ptrViERender->Release();
++  ptrViECapture->Release();
++
++  return NS_OK;
++}
+diff --git a/content/media/nsUserMedia.h b/content/media/nsUserMedia.h
 new file mode 100644
 --- /dev/null
-+++ b/content/media/nsDOMMedia.h
-@@ -0,0 +1,32 @@
-+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++++ b/content/media/nsUserMedia.h
+@@ -0,0 +1,159 @@
++/* ***** BEGIN LICENSE BLOCK *****
++ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
++ *
++ * The contents of this file are subject to the Mozilla Public License Version
++ * 1.1 (the "License"); you may not use this file except in compliance with
++ * the License. You may obtain a copy of the License at
++ * http://www.mozilla.org/MPL/
++ *
++ * Software distributed under the License is distributed on an "AS IS" basis,
++ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++ * for the specific language governing rights and limitations under the
++ * License.
++ *
++ * The Original Code is Mozilla code.
++ *
++ * The Initial Developer of the Original Code is the Mozilla Foundation.
++ * Portions created by the Initial Developer are Copyright (C) 2012
++ * the Initial Developer. All Rights Reserved.
++ *
++ * Contributor(s):
++ *  Anant Narayanan <anant@kix.in>
++ *
++ * Alternatively, the contents of this file may be used under the terms of
++ * either the GNU General Public License Version 2 or later (the "GPL"), or
++ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++ * in which case the provisions of the GPL or the LGPL are applicable instead
++ * of those above. If you wish to allow use of your version of this file only
++ * under the terms of either the GPL or the LGPL, and not to allow others to
++ * use your version of this file under the terms of the MPL, indicate your
++ * decision by deleting the provisions above and replace them with the notice
++ * and other provisions required by the GPL or the LGPL. If you do not delete
++ * the provisions above, a recipient may use your version of this file under
++ * the terms of any one of the MPL, the GPL or the LGPL.
++ *
++ * ***** END LICENSE BLOCK ***** */
 +
-+#ifndef NSDOMMEDIA_H_
-+#define NSDOMMEDIA_H_
++#ifndef NSUSERMEDIA_H_
++#define NSUSERMEDIA_H_
 +
-+#include "nsIDOMMedia.h"
++#include "nsIRunnable.h"
++#include "nsPIDOMWindow.h"
++#include "nsIDOMUserMedia.h"
++#include "nsIDOMCanvasRenderingContext2D.h"
++
++#include "jsapi.h"
++#include "prthread.h"
++#include "nsMemory.h"
++#include "nsCOMPtr.h"
++#include "nsAutoPtr.h"
++#include "nsThreadUtils.h"
++#include "nsUserMediaConvert.h"
 +
 +#include "video_engine/include/vie_base.h"
 +#include "video_engine/include/vie_codec.h"
 +#include "video_engine/include/vie_render.h"
 +#include "video_engine/include/vie_capture.h"
 +
-+#define NS_GET_USER_MEDIA_CID \
-+{ 0x3a9a5cab, 0xa1ca, 0x4172, {0xa9, 0x06, 0xde, 0x3e, 0x8a, 0xad, 0xfb, 0x06 } }
-+#define NS_GET_USER_MEDIA_CONTRACTID "@mozilla.org/getusermedia;1"
++class nsUserMediaStream;
++class nsUserMediaVideoSource;
 +
-+class nsDOMGetUserMedia : public mozIDOMGetUserMedia
++class nsUserMedia : public nsISupports
 +{
 +public:
-+  nsDOMGetUserMedia();
-+
 +  NS_DECL_ISUPPORTS
-+  NS_DECL_MOZIDOMGETUSERMEDIA
++  nsUserMedia();
++
++  void GetUserMedia(
++    nsPIDOMWindow*, const JS::Value&,
++    nsIDOMGetUserMediaSuccessCallback*,
++    nsIDOMGetUserMediaErrorCallback*,
++    nsIDOMCanvasRenderingContext2D*
++  );
++
++protected:
++  nsUserMediaVideoSource *vSource;
 +
 +private:
-+  ~nsDOMMediaStream();
++  ~nsUserMedia();
++
 +};
 +
-+#endif /* NSDOMMEDIA_H_ */
-diff --git a/content/media/nsDOMMediaModule.cpp b/content/media/nsDOMMediaModule.cpp
++class nsUserMediaStream : public nsIDOMUserMediaStream
++{
++public:
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSIDOMUSERMEDIASTREAM
++
++  nsUserMediaStream();
++  void InitVideo(nsUserMediaVideoSource*);
++
++protected:
++  nsUserMediaVideoSource *vSource;
++
++private:
++  ~nsUserMediaStream();
++
++};
++
++class nsUserMediaVideoSource : public webrtc::ExternalRenderer {
++public:
++  nsUserMediaVideoSource();
++  ~nsUserMediaVideoSource();
++  nsresult StartWithCanvas(nsIDOMCanvasRenderingContext2D *ctx);
++  nsresult Stop();
++
++protected:
++  int width;
++  int height;
++  int frames;
++  int channel;
++  int captureID;
++  webrtc::VideoEngine* ptrViE;
++  webrtc::ViEBase* ptrViEBase;
++  webrtc::ViECapture* ptrViECapture;
++  webrtc::ViERender* ptrViERender;
++  webrtc::CaptureCapability caps;
++
++  nsIDOMCanvasRenderingContext2D* canvas;
++  static void StartWithCanvasThread(void *data);
++
++  // ViEExternalRenderer
++  int FrameSizeChange(
++    unsigned int, unsigned int, unsigned int
++  );
++  int DeliverFrame(
++    unsigned char*, int, unsigned int
++  );
++};
++
++/* 
++ * Rendering on Canvas happens on the main thread as this runnable.
++ * This is not very performant, we should move to rendering inside a <video>
++ * so that Gecko can use hardware acceleration.
++ */
++class CanvasRenderer : public nsRunnable {
++public:
++  CanvasRenderer(
++    nsIDOMCanvasRenderingContext2D *pCtx, PRUint32 width, PRUint32 height,
++    nsAutoArrayPtr<PRUint8> &pData, PRUint32 pDataSize)
++    : m_pCtx(pCtx), m_width(width), m_height(height),
++        m_pData(pData), m_pDataSize(pDataSize) {}
++
++  NS_IMETHOD Run() {
++    return m_pCtx->PutImageData_explicit(
++        0, 0, m_width, m_height, m_pData.get(), m_pDataSize,
++        PR_TRUE, 0, 0, m_width, m_height
++    );
++  }
++
++private:
++  nsIDOMCanvasRenderingContext2D *m_pCtx;
++  PRUint32 m_width;
++  PRUint32 m_height;
++  nsAutoArrayPtr<PRUint8> m_pData;
++  PRUint32 m_pDataSize;
++
++};
++
++#endif /* NSUSERMEDIA_H_ */
+diff --git a/content/media/nsUserMediaConvert.cpp b/content/media/nsUserMediaConvert.cpp
 new file mode 100644
 --- /dev/null
-+++ b/content/media/nsDOMMediaModule.cpp
-@@ -0,0 +1,70 @@
-+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++++ b/content/media/nsUserMediaConvert.cpp
+@@ -0,0 +1,186 @@
++#include "nsUserMediaConvert.h"
++
++enum {
++	CLIP_SIZE = 811,
++	CLIP_OFFSET = 277,
++	YMUL = 298,
++	RMUL = 409,
++	BMUL = 516,
++	G1MUL = -100,
++	G2MUL = -208,
++};
++
++static int tables_initialized = 0;
++
++static int yuv2rgb_y[256];
++static int yuv2rgb_r[256];
++static int yuv2rgb_b[256];
++static int yuv2rgb_g1[256];
++static int yuv2rgb_g2[256];
++
++static unsigned long yuv2rgb_clip[CLIP_SIZE];
++static unsigned long yuv2rgb_clip8[CLIP_SIZE];
++static unsigned long yuv2rgb_clip16[CLIP_SIZE];
++
++#define COMPOSE_RGB(yc, rc, gc, bc)		\
++	( 0xff000000 |				\
++	  yuv2rgb_clip16[(yc) + (rc)] |		\
++	  yuv2rgb_clip8[(yc) + (gc)] |		\
++	  yuv2rgb_clip[(yc) + (bc)] )
++
++static void init_yuv2rgb_tables(void)
++{
++	int i;
++
++	for (i = 0; i < 256; ++i) {
++		yuv2rgb_y[i] = (YMUL * (i - 16) + 128) >> 8;
++		yuv2rgb_r[i] = (RMUL * (i - 128)) >> 8;
++		yuv2rgb_b[i] = (BMUL * (i - 128)) >> 8;
++		yuv2rgb_g1[i] = (G1MUL * (i - 128)) >> 8;
++		yuv2rgb_g2[i] = (G2MUL * (i - 128)) >> 8;
++	}
++	for (i = 0 ; i < CLIP_OFFSET; ++i) {
++		yuv2rgb_clip[i] = 0;
++		yuv2rgb_clip8[i] = 0;
++		yuv2rgb_clip16[i] = 0;
++	}
++	for (; i < CLIP_OFFSET + 256; ++i) {
++		yuv2rgb_clip[i] = i - CLIP_OFFSET;
++		yuv2rgb_clip8[i] = (i - CLIP_OFFSET) << 8;
++		yuv2rgb_clip16[i] = (i - CLIP_OFFSET) << 16;
++	}
++	for (; i < CLIP_SIZE; ++i) {
++		yuv2rgb_clip[i] = 255;
++		yuv2rgb_clip8[i] = 255 << 8;
++		yuv2rgb_clip16[i] = 255 << 16;
++	}
++
++	tables_initialized = 1;
++}
++
++/*
++ * Convert i420 to RGB32 (0xBBGGRRAA).
++ * NOTE: size of dest must be >= width * height * 4
++ *
++ * This function uses precalculated tables that are initialized
++ * on the first run.
++ */
++int
++I420toRGB32(int width, int height, const char *src, char *dst)
++{
++	int i, j;
++	unsigned int *dst_odd;
++	unsigned int *dst_even;
++	const unsigned char *u;
++	const unsigned char *v;
++	const unsigned char *y_odd;
++	const unsigned char *y_even;
++
++	if (!tables_initialized)
++		init_yuv2rgb_tables();
++
++	dst_even = (unsigned int *)dst;
++	dst_odd = dst_even + width;
++
++	y_even = (const unsigned char *)src;
++	y_odd = y_even + width;
++	u = y_even + width * height;
++	v = u + ((width * height) >> 2);
++
++	for (i = 0; i < height / 2; ++i) {
++		for (j = 0; j < width / 2; ++j) {
++			const int rc = yuv2rgb_r[*v];
++			const int gc = yuv2rgb_g1[*v] + yuv2rgb_g2[*u];
++			const int bc = yuv2rgb_b[*u];
++			const int yc0_even = CLIP_OFFSET + yuv2rgb_y[*y_even++];
++			const int yc1_even = CLIP_OFFSET + yuv2rgb_y[*y_even++];
++			const int yc0_odd = CLIP_OFFSET + yuv2rgb_y[*y_odd++];
++			const int yc1_odd = CLIP_OFFSET + yuv2rgb_y[*y_odd++];
++
++			*dst_even++ = COMPOSE_RGB(yc0_even, bc, gc, rc);
++			*dst_even++ = COMPOSE_RGB(yc1_even, bc, gc, rc);
++			*dst_odd++ = COMPOSE_RGB(yc0_odd, bc, gc, rc);
++			*dst_odd++ = COMPOSE_RGB(yc1_odd, bc, gc, rc);
++			
++			++u;
++			++v;
++		}
++
++		y_even += width;
++		y_odd += width;
++		dst_even += width;
++		dst_odd += width;
++	}
++
++	return 0;
++}
++
++/*
++ * Convert RGB32 to i420. NOTE: size of dest must be >= width * height * 3 / 2
++ * Based on formulas found at http://en.wikipedia.org/wiki/YUV  (libvidcap)
++ */
++int
++RGB32toI420(int width, int height, const char *src, char *dst)
++{
++    int i, j;
++    unsigned char *dst_y_even;
++    unsigned char *dst_y_odd;
++    unsigned char *dst_u;
++    unsigned char *dst_v;
++    const unsigned char *src_even;
++    const unsigned char *src_odd;
++
++    src_even = (const unsigned char *)src;
++    src_odd = src_even + width * 4;
++
++    dst_y_even = (unsigned char *)dst;
++    dst_y_odd = dst_y_even + width;
++    dst_u = dst_y_even + width * height;
++    dst_v = dst_u + ((width * height) >> 2);
++
++    for (i = 0; i < height / 2; ++i) {
++        for (j = 0; j < width / 2; ++j) {
++            short r, g, b;
++            r = *src_even++;
++            g = *src_even++;
++            b = *src_even++;
++
++            ++src_even;
++            *dst_y_even++ = (unsigned char)
++                ((( r * 66 + g * 129 + b * 25 + 128 ) >> 8 ) + 16);
++            *dst_u++ = (unsigned char)
++                ((( r * -38 - g * 74 + b * 112 + 128 ) >> 8 ) + 128);
++            *dst_v++ = (unsigned char)
++                ((( r * 112 - g * 94 - b * 18 + 128 ) >> 8 ) + 128);
++
++            r = *src_even++;
++            g = *src_even++;
++            b = *src_even++;
++            ++src_even;
++            *dst_y_even++ = (unsigned char)
++                ((( r * 66 + g * 129 + b * 25 + 128 ) >> 8 ) + 16);
++
++            r = *src_odd++;
++            g = *src_odd++;
++            b = *src_odd++;
++            ++src_odd;
++            *dst_y_odd++ = (unsigned char)
++                ((( r * 66 + g * 129 + b * 25 + 128 ) >> 8 ) + 16);
++
++            r = *src_odd++;
++            g = *src_odd++;
++            b = *src_odd++;
++            ++src_odd;
++            *dst_y_odd++ = (unsigned char)
++                ((( r * 66 + g * 129 + b * 25 + 128 ) >> 8 ) + 16);
++        }
++
++        dst_y_odd += width;
++        dst_y_even += width;
++        src_odd += width * 4;
++        src_even += width * 4;
++    }
++
++    return 0;
++}
++
+diff --git a/content/media/nsUserMediaConvert.h b/content/media/nsUserMediaConvert.h
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsUserMediaConvert.h
+@@ -0,0 +1,3 @@
++/* Converter functions from libvidcap */
++int RGB32toI420(int width, int height, const char *src, char *dst);
++int I420toRGB32(int width, int height, const char *src, char *dst);
+diff --git a/dom/Makefile.in b/dom/Makefile.in
+--- a/dom/Makefile.in
++++ b/dom/Makefile.in
+@@ -57,16 +57,17 @@ DIRS = \
+   interfaces/traversal \
+   interfaces/range \
+   interfaces/xbl \
+   interfaces/xpath \
+   interfaces/load-save \
+   interfaces/xul \
+   interfaces/storage \
+   interfaces/json \
++  interfaces/media \
+   interfaces/offline \
+   interfaces/geolocation \
+   interfaces/notification \
+   interfaces/svg \
+   interfaces/smil \
+   $(NULL)
+ 
+ DIRS += \
+diff --git a/dom/base/Makefile.in b/dom/base/Makefile.in
+--- a/dom/base/Makefile.in
++++ b/dom/base/Makefile.in
+@@ -152,16 +152,17 @@ ifdef MOZ_JSDEBUGGER
+ DEFINES += -DMOZ_JSDEBUGGER
+ endif
+ 
+ ifdef MOZ_B2G_RIL
+ DEFINES += -DMOZ_B2G_RIL
+ endif
+ 
+ include $(topsrcdir)/config/config.mk
++include $(topsrcdir)/media/webrtc/webrtc-config.mk
+ include $(topsrcdir)/ipc/chromium/chromium-config.mk
+ 
+ include $(topsrcdir)/config/rules.mk
+ 
+ LOCAL_INCLUDES += \
+ 		-I$(topsrcdir)/js/xpconnect/src \
+ 		-I$(topsrcdir)/js/xpconnect/wrappers \
+ 		-I$(topsrcdir)/xpcom/ds \
+diff --git a/dom/base/Makefile.in.orig b/dom/base/Makefile.in.orig
+new file mode 100644
+--- /dev/null
++++ b/dom/base/Makefile.in.orig
+@@ -0,0 +1,173 @@
++#
++# ***** BEGIN LICENSE BLOCK *****
++# Version: MPL 1.1/GPL 2.0/LGPL 2.1
++#
++# The contents of this file are subject to the Mozilla Public License Version
++# 1.1 (the "License"); you may not use this file except in compliance with
++# the License. You may obtain a copy of the License at
++# http://www.mozilla.org/MPL/
++#
++# Software distributed under the License is distributed on an "AS IS" basis,
++# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
++# for the specific language governing rights and limitations under the
++# License.
++#
++# The Original Code is mozilla.org code.
++#
++# The Initial Developer of the Original Code is
++# Netscape Communications Corporation.
++# Portions created by the Initial Developer are Copyright (C) 1998
++# the Initial Developer. All Rights Reserved.
++#
++# Contributor(s):
++#
++# Alternatively, the contents of this file may be used under the terms of
++# either of the GNU General Public License Version 2 or later (the "GPL"),
++# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
++# in which case the provisions of the GPL or the LGPL are applicable instead
++# of those above. If you wish to allow use of your version of this file only
++# under the terms of either the GPL or the LGPL, and not to allow others to
++# use your version of this file under the terms of the MPL, indicate your
++# decision by deleting the provisions above and replace them with the notice
++# and other provisions required by the GPL or the LGPL. If you do not delete
++# the provisions above, a recipient may use your version of this file under
++# the terms of any one of the MPL, the GPL or the LGPL.
++#
++# ***** END LICENSE BLOCK *****
++
++DEPTH		= ../..
++topsrcdir	= @top_srcdir@
++srcdir		= @srcdir@
++VPATH		= @srcdir@
++
++include $(DEPTH)/config/autoconf.mk
++
++MODULE		= dom
++LIBRARY_NAME	= jsdombase_s
++LIBXUL_LIBRARY	= 1
++FORCE_STATIC_LIB = 1
++
++DIRS = \
++  test \
++  $(NULL)
++
++EXTRA_PP_COMPONENTS = \
++		ConsoleAPI.js \
++		ConsoleAPI.manifest \
++		$(NULL)
++
++EXTRA_JS_MODULES = ConsoleAPIStorage.jsm \
++		$(NULL)
++
++EXTRA_COMPONENTS = \
++	        Webapps.js \
++	        Webapps.manifest \
++		$(NULL)
++
++EXTRA_JS_MODULES += Webapps.jsm \
++		$(NULL)
++
++EXTRA_JS_MODULES += DOMRequestHelper.jsm \
++		$(NULL)
++
++XPIDLSRCS = \
++  nsIDOMDOMError.idl \
++  nsIDOMDOMRequest.idl \
++  nsIEntropyCollector.idl \
++  nsIScriptChannel.idl \
++  $(NULL)
++
++EXPORTS = \
++  nsDOMCID.h \
++  nsDOMClassInfoClasses.h \
++  nsDOMClassInfoID.h \
++  nsDOMError.h \
++  nsDOMJSUtils.h \
++  nsDOMScriptObjectHolder.h \
++  nsDOMString.h \
++  nsIBaseDOMException.h \
++  nsIDOMClassInfo.h \
++  nsIDOMScriptObjectFactory.h \
++  nsIJSEventListener.h \
++  nsIJSNativeInitializer.h \
++  nsIScriptContext.h	\
++  nsIScriptExternalNameSet.h \
++  nsIScriptGlobalObject.h \
++  nsIScriptGlobalObjectOwner.h \
++  nsIScriptNameSpaceManager.h \
++  nsIScriptObjectOwner.h \
++  nsIScriptObjectPrincipal.h \
++  nsIScriptRuntime.h \
++  nsIScriptTimeoutHandler.h \
++  nsPIDOMWindow.h \
++  nsPIWindowRoot.h \
++  nsFocusManager.h \
++  nsWrapperCache.h \
++  nsContentPermissionHelper.h \
++  nsStructuredCloneContainer.h \
++  nsWindowMemoryReporter.h \
++  $(NULL)
++
++EXPORTS_NAMESPACES = mozilla/dom
++EXPORTS_mozilla/dom = \
++  DOMError.h \
++  DOMRequest.h \
++  StructuredCloneTags.h \
++  $(NULL)
++
++CPPSRCS =			\
++	nsBarProps.cpp          \
++	nsDOMException.cpp 	\
++	nsDOMWindowUtils.cpp 	\
++	nsJSEnvironment.cpp	\
++	nsJSTimeoutHandler.cpp	\
++	nsFocusManager.cpp \
++	nsGlobalWindow.cpp      \
++	nsGlobalWindowCommands.cpp \
++	nsLocation.cpp		\
++	nsDOMWindowList.cpp	\
++	nsJSUtils.cpp		\
++	nsScreen.cpp		\
++	nsHistory.cpp		\
++	nsMimeTypeArray.cpp	\
++	nsPluginArray.cpp	\
++	nsWindowRoot.cpp	\
++	nsDOMClassInfo.cpp	\
++	nsScriptNameSpaceManager.cpp \
++	nsDOMScriptObjectFactory.cpp \
++	nsQueryContentEventResult.cpp \
++	nsContentPermissionHelper.cpp \
++	nsStructuredCloneContainer.cpp \
++	nsDOMNavigationTiming.cpp \
++	nsPerformance.cpp	\
++	nsWindowMemoryReporter.cpp \
++	DOMError.cpp \
++	DOMRequest.cpp \
++	Navigator.cpp \
++	$(NULL)
++
++include $(topsrcdir)/dom/dom-config.mk
++
++ifdef MOZ_JSDEBUGGER
++DEFINES += -DMOZ_JSDEBUGGER
++endif
++
++ifdef MOZ_B2G_RIL
++DEFINES += -DMOZ_B2G_RIL
++endif
++
++include $(topsrcdir)/config/config.mk
++include $(topsrcdir)/ipc/chromium/chromium-config.mk
++
++include $(topsrcdir)/config/rules.mk
++
++LOCAL_INCLUDES += \
++		-I$(topsrcdir)/js/xpconnect/src \
++		-I$(topsrcdir)/js/xpconnect/wrappers \
++		-I$(topsrcdir)/xpcom/ds \
++		$(NULL)
++
++ifdef MOZ_X11
++CXXFLAGS += $(TK_CFLAGS)
++LDFLAGS += $(TK_LIBS)
++endif
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -51,16 +51,17 @@
+ #include "base/basictypes.h"
+ 
+ #include "Navigator.h"
+ #include "nsIXULAppInfo.h"
+ #include "nsPluginArray.h"
+ #include "nsMimeTypeArray.h"
+ #include "nsDesktopNotification.h"
+ #include "nsGeolocation.h"
++#include "nsUserMedia.h"
+ #include "nsIHttpProtocolHandler.h"
+ #include "nsICachingChannel.h"
+ #include "nsIDocShell.h"
+ #include "nsIWebContentHandlerRegistrar.h"
+ #include "nsICookiePermission.h"
+ #include "nsIScriptSecurityManager.h"
+ #include "nsIJSContextStack.h"
+ #include "nsCharSeparatedTokenizer.h"
+@@ -127,16 +128,17 @@ Navigator::~Navigator()
+   Invalidate();
+ }
+ 
+ NS_INTERFACE_MAP_BEGIN(Navigator)
+   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMGetUserMedia)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_B2G_RIL
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
+ #endif
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
+ #ifdef MOZ_B2G_BT
+@@ -865,16 +867,38 @@ Navigator::MozIsLocallyAvailable(const n
+     return NS_OK;
+   }
+ 
+   nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
+   return httpChannel->GetRequestSucceeded(aIsAvailable);
+ }
+ 
+ //*****************************************************************************
++//    Navigator::nsIDOMGetUserMedia, a function not an attribute!
++//*****************************************************************************
++
++NS_IMETHODIMP Navigator::GetUserMedia(const JS::Value& aValue,
++  nsIDOMGetUserMediaSuccessCallback* success,
++  nsIDOMGetUserMediaErrorCallback* error,
++  nsIDOMCanvasRenderingContext2D* canvas)
++{
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
++    return NS_ERROR_FAILURE;
++  }
++
++  if (!mUserMedia) {
++    mUserMedia = new nsUserMedia();
++  }
++
++  mUserMedia->GetUserMedia(win, aValue, success, error, canvas);
++  return NS_OK;
++}
++
++//*****************************************************************************
+ //    Navigator::nsIDOMNavigatorGeolocation
+ //*****************************************************************************
+ 
+ NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
+ {
+   NS_ENSURE_ARG_POINTER(_retval);
+   *_retval = nsnull;
+ 
+diff --git a/dom/base/Navigator.cpp.orig b/dom/base/Navigator.cpp.orig
+new file mode 100644
+--- /dev/null
++++ b/dom/base/Navigator.cpp.orig
+@@ -0,0 +1,1294 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set sw=2 ts=2 et tw=78: */
 +/* ***** BEGIN LICENSE BLOCK *****
 + * Version: MPL 1.1/GPL 2.0/LGPL 2.1
 + *
@@ -139,15 +1092,25 @@ new file mode 100644
 + * for the specific language governing rights and limitations under the
 + * License.
 + *
-+ * The Original Code is WebRTC.
++ * The Original Code is mozilla.org code.
 + *
 + * The Initial Developer of the Original Code is
 + * Netscape Communications Corporation.
-+ * Portions created by the Initial Developer are Copyright (C) 2012
++ * Portions created by the Initial Developer are Copyright (C) 1998
 + * the Initial Developer. All Rights Reserved.
 + *
 + * Contributor(s):
-+ *   Anant Narayanan <anant@mozilla.com>
++ *   Travis Bogard <travis@netscape.com>
++ *   Brendan Eich <brendan@mozilla.org>
++ *   David Hyatt (hyatt@netscape.com)
++ *   Dan Rosen <dr@netscape.com>
++ *   Vidur Apparao <vidur@netscape.com>
++ *   Johnny Stenback <jst@netscape.com>
++ *   Mark Hammond <mhammond@skippinet.com.au>
++ *   Ryan Jones <sciguyryan@gmail.com>
++ *   Jeff Walden <jwalden+code@mit.edu>
++ *   Ben Bucksch <ben.bucksch  beonex.com>
++ *   Emanuele Costa <emanuele.costa@gmail.com>
 + *
 + * Alternatively, the contents of this file may be used under the terms of
 + * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -163,49 +1126,1379 @@ new file mode 100644
 + *
 + * ***** END LICENSE BLOCK ***** */
 +
-+#include "mozilla/ModuleUtils.h"
-+#include "nsIClassInfoImpl.h"
++// Needs to be first.
++#include "base/basictypes.h"
 +
-+#include "nsDOMMedia.h"
++#include "Navigator.h"
++#include "nsIXULAppInfo.h"
++#include "nsPluginArray.h"
++#include "nsMimeTypeArray.h"
++#include "nsDesktopNotification.h"
++#include "nsGeolocation.h"
++#include "nsIHttpProtocolHandler.h"
++#include "nsICachingChannel.h"
++#include "nsIDocShell.h"
++#include "nsIWebContentHandlerRegistrar.h"
++#include "nsICookiePermission.h"
++#include "nsIScriptSecurityManager.h"
++#include "nsIJSContextStack.h"
++#include "nsCharSeparatedTokenizer.h"
++#include "nsContentUtils.h"
++#include "nsUnicharUtils.h"
++#include "mozilla/Preferences.h"
++#include "mozilla/Telemetry.h"
++#include "BatteryManager.h"
++#include "PowerManager.h"
++#include "nsIDOMWakeLock.h"
++#include "nsIPowerManagerService.h"
++#include "SmsManager.h"
++#include "nsISmsService.h"
++#include "mozilla/Hal.h"
++#include "nsIWebNavigation.h"
++#include "mozilla/ClearOnShutdown.h"
++#include "Connection.h"
 +
-+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMGetUserMedia)
++#ifdef MOZ_B2G_RIL
++#include "TelephonyFactory.h"
++#endif
++#ifdef MOZ_B2G_BT
++#include "nsIDOMBluetoothAdapter.h"
++#include "BluetoothAdapter.h"
++#endif
 +
-+NS_DEFINE_NAMED_CID(NS_GET_USER_MEDIA_CID);
++// This should not be in the namespace.
++DOMCI_DATA(Navigator, mozilla::dom::Navigator)
 +
-+static const mozilla::Module::CIDEntry kDOMMediaCIDs[] = {
-+    { &kNS_GET_USER_MEDIA_CID, false, NULL, nsDOMGetUserMediaConstructor },
-+    { NULL }
++namespace mozilla {
++namespace dom {
++
++static const char sJSStackContractID[] = "@mozilla.org/js/xpc/ContextStack;1";
++
++static bool sDoNotTrackEnabled = false;
++static bool sVibratorEnabled   = false;
++static PRUint32 sMaxVibrateMS  = 0;
++static PRUint32 sMaxVibrateListLen = 0;
++
++/* static */
++void
++Navigator::Init()
++{
++  Preferences::AddBoolVarCache(&sDoNotTrackEnabled,
++                               "privacy.donottrackheader.enabled",
++                               false);
++  Preferences::AddBoolVarCache(&sVibratorEnabled,
++                               "dom.vibrator.enabled", true);
++  Preferences::AddUintVarCache(&sMaxVibrateMS,
++                               "dom.vibrator.max_vibrate_ms", 10000);
++  Preferences::AddUintVarCache(&sMaxVibrateListLen,
++                               "dom.vibrator.max_vibrate_list_len", 128);
++}
++
++Navigator::Navigator(nsPIDOMWindow* aWindow)
++  : mWindow(do_GetWeakReference(aWindow))
++{
++  NS_ASSERTION(aWindow->IsInnerWindow(),
++               "Navigator must get an inner window!");
++}
++
++Navigator::~Navigator()
++{
++  Invalidate();
++}
++
++NS_INTERFACE_MAP_BEGIN(Navigator)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNavigator)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
++#ifdef MOZ_B2G_RIL
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
++#endif
++  NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
++#ifdef MOZ_B2G_BT
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorBluetooth)
++#endif
++  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Navigator)
++NS_INTERFACE_MAP_END
++
++NS_IMPL_ADDREF(Navigator)
++NS_IMPL_RELEASE(Navigator)
++
++void
++Navigator::Invalidate()
++{
++  mWindow = nsnull;
++
++  if (mPlugins) {
++    mPlugins->Invalidate();
++    mPlugins = nsnull;
++  }
++
++  // If there is a page transition, make sure delete the geolocation object.
++  if (mGeolocation) {
++    mGeolocation->Shutdown();
++    mGeolocation = nsnull;
++  }
++
++  if (mNotification) {
++    mNotification->Shutdown();
++    mNotification = nsnull;
++  }
++
++  if (mBatteryManager) {
++    mBatteryManager->Shutdown();
++    mBatteryManager = nsnull;
++  }
++
++  if (mPowerManager) {
++    mPowerManager->Shutdown();
++    mPowerManager = nsnull;
++  }
++
++  if (mSmsManager) {
++    mSmsManager->Shutdown();
++    mSmsManager = nsnull;
++  }
++
++#ifdef MOZ_B2G_RIL
++  if (mTelephony) {
++    mTelephony = nsnull;
++  }
++#endif
++
++  if (mConnection) {
++    mConnection->Shutdown();
++    mConnection = nsnull;
++  }
++
++#ifdef MOZ_B2G_BT
++  if (mBluetooth) {
++    mBluetooth = nsnull;
++  }
++#endif
++}
++
++nsPIDOMWindow *
++Navigator::GetWindow()
++{
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  return win;
++}
++
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigator
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::GetUserAgent(nsAString& aUserAgent)
++{
++  return NS_GetNavigatorUserAgent(aUserAgent);
++}
++
++NS_IMETHODIMP
++Navigator::GetAppCodeName(nsAString& aAppCodeName)
++{
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString appName;
++  rv = service->GetAppName(appName);
++  CopyASCIItoUTF16(appName, aAppCodeName);
++
++  return rv;
++}
++
++NS_IMETHODIMP
++Navigator::GetAppVersion(nsAString& aAppVersion)
++{
++  return NS_GetNavigatorAppVersion(aAppVersion);
++}
++
++NS_IMETHODIMP
++Navigator::GetAppName(nsAString& aAppName)
++{
++  return NS_GetNavigatorAppName(aAppName);
++}
++
++/**
++ * JS property navigator.language, exposed to web content.
++ * Take first value from Accept-Languages (HTTP header), which is
++ * the "content language" freely set by the user in the Pref window.
++ *
++ * Do not use UI language (chosen app locale) here.
++ * See RFC 2616, Section 15.1.4 "Privacy Issues Connected to Accept Headers"
++ *
++ * "en", "en-US" and "i-cherokee" and "" are valid.
++ * Fallback in case of invalid pref should be "" (empty string), to
++ * let site do fallback, e.g. to site's local language.
++ */
++NS_IMETHODIMP
++Navigator::GetLanguage(nsAString& aLanguage)
++{
++  // E.g. "de-de, en-us,en".
++  const nsAdoptingString& acceptLang =
++    Preferences::GetLocalizedString("intl.accept_languages");
++
++  // Take everything before the first "," or ";", without trailing space.
++  nsCharSeparatedTokenizer langTokenizer(acceptLang, ',');
++  const nsSubstring &firstLangPart = langTokenizer.nextToken();
++  nsCharSeparatedTokenizer qTokenizer(firstLangPart, ';');
++  aLanguage.Assign(qTokenizer.nextToken());
++
++  // Checks and fixups:
++  // replace "_" with "-" to avoid POSIX/Windows "en_US" notation.
++  if (aLanguage.Length() > 2 && aLanguage[2] == PRUnichar('_')) {
++    aLanguage.Replace(2, 1, PRUnichar('-')); // TODO replace all
++  }
++
++  // Use uppercase for country part, e.g. "en-US", not "en-us", see BCP47
++  // only uppercase 2-letter country codes, not "zh-Hant", "de-DE-x-goethe".
++  if (aLanguage.Length() <= 2) {
++    return NS_OK;
++  }
++
++  nsCharSeparatedTokenizer localeTokenizer(aLanguage, '-');
++  PRInt32 pos = 0;
++  bool first = true;
++  while (localeTokenizer.hasMoreTokens()) {
++    const nsSubstring& code = localeTokenizer.nextToken();
++
++    if (code.Length() == 2 && !first) {
++      nsAutoString upper(code);
++      ToUpperCase(upper);
++      aLanguage.Replace(pos, code.Length(), upper);
++    }
++
++    pos += code.Length() + 1; // 1 is the separator
++    first = false;
++  }
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetPlatform(nsAString& aPlatform)
++{
++  return NS_GetNavigatorPlatform(aPlatform);
++}
++
++NS_IMETHODIMP
++Navigator::GetOscpu(nsAString& aOSCPU)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      Preferences::GetString("general.oscpu.override");
++
++    if (override) {
++      aOSCPU = override;
++      return NS_OK;
++    }
++  }
++
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString oscpu;
++  rv = service->GetOscpu(oscpu);
++  CopyASCIItoUTF16(oscpu, aOSCPU);
++
++  return rv;
++}
++
++NS_IMETHODIMP
++Navigator::GetVendor(nsAString& aVendor)
++{
++  aVendor.Truncate();
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetVendorSub(nsAString& aVendorSub)
++{
++  aVendorSub.Truncate();
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetProduct(nsAString& aProduct)
++{
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString product;
++  rv = service->GetProduct(product);
++  CopyASCIItoUTF16(product, aProduct);
++
++  return rv;
++}
++
++NS_IMETHODIMP
++Navigator::GetProductSub(nsAString& aProductSub)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      Preferences::GetString("general.productSub.override");
++
++    if (override) {
++      aProductSub = override;
++      return NS_OK;
++    }
++
++    // 'general.useragent.productSub' backwards compatible with 1.8 branch.
++    const nsAdoptingString& override2 =
++      Preferences::GetString("general.useragent.productSub");
++
++    if (override2) {
++      aProductSub = override2;
++      return NS_OK;
++    }
++  }
++
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString productSub;
++  rv = service->GetProductSub(productSub);
++  CopyASCIItoUTF16(productSub, aProductSub);
++
++  return rv;
++}
++
++NS_IMETHODIMP
++Navigator::GetMimeTypes(nsIDOMMimeTypeArray** aMimeTypes)
++{
++  if (!mMimeTypes) {
++    mMimeTypes = new nsMimeTypeArray(this);
++  }
++
++  NS_ADDREF(*aMimeTypes = mMimeTypes);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetPlugins(nsIDOMPluginArray** aPlugins)
++{
++  if (!mPlugins) {
++    nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++    mPlugins = new nsPluginArray(this, win ? win->GetDocShell() : nsnull);
++  }
++
++  NS_ADDREF(*aPlugins = mPlugins);
++
++  return NS_OK;
++}
++
++// Values for the network.cookie.cookieBehavior pref are documented in
++// nsCookieService.cpp.
++#define COOKIE_BEHAVIOR_REJECT 2
++
++NS_IMETHODIMP
++Navigator::GetCookieEnabled(bool* aCookieEnabled)
++{
++  *aCookieEnabled =
++    (Preferences::GetInt("network.cookie.cookieBehavior",
++                         COOKIE_BEHAVIOR_REJECT) != COOKIE_BEHAVIOR_REJECT);
++
++  // Check whether an exception overrides the global cookie behavior
++  // Note that the code for getting the URI here matches that in
++  // nsHTMLDocument::SetCookie.
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetDocShell()) {
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsIDocument> doc = do_QueryInterface(win->GetExtantDocument());
++  if (!doc) {
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsIURI> codebaseURI;
++  doc->NodePrincipal()->GetURI(getter_AddRefs(codebaseURI));
++
++  if (!codebaseURI) {
++    // Not a codebase, so technically can't set cookies, but let's
++    // just return the default value.
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsICookiePermission> permMgr =
++    do_GetService(NS_COOKIEPERMISSION_CONTRACTID);
++  NS_ENSURE_TRUE(permMgr, NS_OK);
++
++  // Pass null for the channel, just like the cookie service does.
++  nsCookieAccess access;
++  nsresult rv = permMgr->CanAccess(codebaseURI, nsnull, &access);
++  NS_ENSURE_SUCCESS(rv, NS_OK);
++
++  if (access != nsICookiePermission::ACCESS_DEFAULT) {
++    *aCookieEnabled = access != nsICookiePermission::ACCESS_DENY;
++  }
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetOnLine(bool* aOnline)
++{
++  NS_PRECONDITION(aOnline, "Null out param");
++
++  *aOnline = !NS_IsOffline();
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetBuildID(nsAString& aBuildID)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      Preferences::GetString("general.buildID.override");
++
++    if (override) {
++      aBuildID = override;
++      return NS_OK;
++    }
++  }
++
++  nsCOMPtr<nsIXULAppInfo> appInfo =
++    do_GetService("@mozilla.org/xre/app-info;1");
++  if (!appInfo) {
++    return NS_ERROR_NOT_IMPLEMENTED;
++  }
++
++  nsCAutoString buildID;
++  nsresult rv = appInfo->GetAppBuildID(buildID);
++  if (NS_FAILED(rv)) {
++    return rv;
++  }
++
++  aBuildID.Truncate();
++  AppendASCIItoUTF16(buildID, aBuildID);
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetDoNotTrack(nsAString &aResult)
++{
++  if (sDoNotTrackEnabled) {
++    aResult.AssignLiteral("yes");
++  } else {
++    aResult.AssignLiteral("unspecified");
++  }
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::JavaEnabled(bool* aReturn)
++{
++  Telemetry::AutoTimer<Telemetry::CHECK_JAVA_ENABLED> telemetryTimer;
++  // Return true if we have a handler for "application/x-java-vm",
++  // otherwise return false.
++  *aReturn = false;
++
++  if (!mMimeTypes) {
++    mMimeTypes = new nsMimeTypeArray(this);
++  }
++
++  RefreshMIMEArray();
++
++  PRUint32 count;
++  mMimeTypes->GetLength(&count);
++  for (PRUint32 i = 0; i < count; i++) {
++    nsresult rv;
++    nsIDOMMimeType* type = mMimeTypes->GetItemAt(i, &rv);
++
++    if (NS_FAILED(rv) || !type) {
++      continue;
++    }
++
++    nsAutoString mimeString;
++    if (NS_FAILED(type->GetType(mimeString))) {
++      continue;
++    }
++
++    if (mimeString.EqualsLiteral("application/x-java-vm")) {
++      *aReturn = true;
++      break;
++    }
++  }
++
++  return NS_OK;
++}
++
++void
++Navigator::RefreshMIMEArray()
++{
++  if (mMimeTypes) {
++    mMimeTypes->Refresh();
++  }
++}
++
++bool
++Navigator::HasDesktopNotificationSupport()
++{
++  return Preferences::GetBool("notification.feature.enabled", false);
++}
++
++namespace {
++
++class VibrateWindowListener : public nsIDOMEventListener
++{
++public:
++  VibrateWindowListener(nsIDOMWindow *aWindow, nsIDOMDocument *aDocument)
++  {
++    mWindow = do_GetWeakReference(aWindow);
++    mDocument = do_GetWeakReference(aDocument);
++
++    nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aDocument);
++    NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
++    target->AddSystemEventListener(visibilitychange,
++                                   this, /* listener */
++                                   true, /* use capture */
++                                   false /* wants untrusted */);
++  }
++
++  virtual ~VibrateWindowListener()
++  {
++  }
++
++  void RemoveListener();
++
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSIDOMEVENTLISTENER
++
++private:
++  nsWeakPtr mWindow;
++  nsWeakPtr mDocument;
 +};
 +
-+static const mozilla::Module::ContractIDEntry kDOMMediaContracts[] = {
-+    { NS_GET_USER_MEDIA_CONTRACTID, &kNS_GET_USER_MEDIA_CID },
-+    { NULL }
-+};
++NS_IMPL_ISUPPORTS1(VibrateWindowListener, nsIDOMEventListener)
 +
-+static const mozilla::Module::CategoryEntry kDOMMediaCategories[] = {
-+    { "JavaScript-navigator-property", "media", NS_GET_USER_MEDIA_CONTRACTID },
-+    { NULL }
-+};
++nsRefPtr<VibrateWindowListener> gVibrateWindowListener;
 +
-+static const mozilla::Module kDOMMediaModule = {
-+    mozilla::Module::kVersion,
-+    kDOMMediaCIDs,
-+    kDOMMediaContracts,
-+    kDOMMediaCategories
-+};
++NS_IMETHODIMP
++VibrateWindowListener::HandleEvent(nsIDOMEvent* aEvent)
++{
++  nsCOMPtr<nsIDOMEventTarget> target;
++  aEvent->GetTarget(getter_AddRefs(target));
++  nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(target);
 +
-+NSMODULE_DEFN(nsDOMMediaModule) = &kDOMMediaModule;
-diff --git a/dom/Makefile.in b/dom/Makefile.in
---- a/dom/Makefile.in
-+++ b/dom/Makefile.in
-@@ -66,6 +66,7 @@ DIRS = \
-   interfaces/notification \
-   interfaces/svg \
-   interfaces/smil \
-+  interfaces/media \
-   $(NULL)
++  bool hidden = true;
++  if (doc) {
++    doc->GetMozHidden(&hidden);
++  }
++
++  if (hidden) {
++    // It's important that we call CancelVibrate(), not Vibrate() with an
++    // empty list, because Vibrate() will fail if we're no longer focused, but
++    // CancelVibrate() will succeed, so long as nobody else has started a new
++    // vibration pattern.
++    nsCOMPtr<nsIDOMWindow> window = do_QueryReferent(mWindow);
++    hal::CancelVibrate(window);
++    RemoveListener();
++    gVibrateWindowListener = NULL;
++    // Careful: The line above might have deleted |this|!
++  }
++
++  return NS_OK;
++}
++
++void
++VibrateWindowListener::RemoveListener()
++{
++  nsCOMPtr<nsIDOMEventTarget> target = do_QueryReferent(mDocument);
++  if (!target) {
++    return;
++  }
++  NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
++  target->RemoveSystemEventListener(visibilitychange, this,
++                                    true /* use capture */);
++}
++
++/**
++ * Converts a jsval into a vibration duration, checking that the duration is in
++ * bounds (non-negative and not larger than sMaxVibrateMS).
++ *
++ * Returns true on success, false on failure.
++ */
++bool
++GetVibrationDurationFromJsval(const jsval& aJSVal, JSContext* cx,
++                              PRInt32 *aOut)
++{
++  return JS_ValueToInt32(cx, aJSVal, aOut) &&
++         *aOut >= 0 && static_cast<PRUint32>(*aOut) <= sMaxVibrateMS;
++}
++
++} // anonymous namespace
++
++NS_IMETHODIMP
++Navigator::MozVibrate(const jsval& aPattern, JSContext* cx)
++{
++  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
++  NS_ENSURE_TRUE(win, NS_OK);
++
++  nsIDOMDocument* domDoc = win->GetExtantDocument();
++  NS_ENSURE_TRUE(domDoc, NS_ERROR_FAILURE);
++
++  bool hidden = true;
++  domDoc->GetMozHidden(&hidden);
++  if (hidden) {
++    // Hidden documents cannot start or stop a vibration.
++    return NS_OK;
++  }
++
++  nsAutoTArray<PRUint32, 8> pattern;
++
++  // null or undefined pattern is an error.
++  if (JSVAL_IS_NULL(aPattern) || JSVAL_IS_VOID(aPattern)) {
++    return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
++  }
++
++  if (JSVAL_IS_PRIMITIVE(aPattern)) {
++    PRInt32 p;
++    if (GetVibrationDurationFromJsval(aPattern, cx, &p)) {
++      pattern.AppendElement(p);
++    }
++    else {
++      return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
++    }
++  }
++  else {
++    JSObject *obj = JSVAL_TO_OBJECT(aPattern);
++    PRUint32 length;
++    if (!JS_GetArrayLength(cx, obj, &length) || length > sMaxVibrateListLen) {
++      return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
++    }
++    pattern.SetLength(length);
++
++    for (PRUint32 i = 0; i < length; ++i) {
++      jsval v;
++      PRInt32 pv;
++      if (JS_GetElement(cx, obj, i, &v) &&
++          GetVibrationDurationFromJsval(v, cx, &pv)) {
++        pattern[i] = pv;
++      }
++      else {
++        return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
++      }
++    }
++  }
++
++  // The spec says we check sVibratorEnabled after we've done the sanity
++  // checking on the pattern.
++  if (!sVibratorEnabled) {
++    return NS_OK;
++  }
++
++  // Add a listener to cancel the vibration if the document becomes hidden,
++  // and remove the old mozvisibility listener, if there was one.
++
++  if (!gVibrateWindowListener) {
++    // If gVibrateWindowListener is null, this is the first time we've vibrated,
++    // and we need to register a listener to clear gVibrateWindowListener on
++    // shutdown.
++    ClearOnShutdown(&gVibrateWindowListener);
++  }
++  else {
++    gVibrateWindowListener->RemoveListener();
++  }
++  gVibrateWindowListener = new VibrateWindowListener(win, domDoc);
++
++  nsCOMPtr<nsIDOMWindow> domWindow =
++    do_QueryInterface(static_cast<nsIDOMWindow*>(win));
++  hal::Vibrate(pattern, domWindow);
++  return NS_OK;
++}
++
++//*****************************************************************************
++//    Navigator::nsIDOMClientInformation
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::RegisterContentHandler(const nsAString& aMIMEType,
++                                  const nsAString& aURI,
++                                  const nsAString& aTitle)
++{
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsIWebContentHandlerRegistrar> registrar =
++    do_GetService(NS_WEBCONTENTHANDLERREGISTRAR_CONTRACTID);
++  if (!registrar) {
++    return NS_OK;
++  }
++
++  return registrar->RegisterContentHandler(aMIMEType, aURI, aTitle,
++                                           win->GetOuterWindow());
++}
++
++NS_IMETHODIMP
++Navigator::RegisterProtocolHandler(const nsAString& aProtocol,
++                                   const nsAString& aURI,
++                                   const nsAString& aTitle)
++{
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsIWebContentHandlerRegistrar> registrar =
++    do_GetService(NS_WEBCONTENTHANDLERREGISTRAR_CONTRACTID);
++  if (!registrar) {
++    return NS_OK;
++  }
++
++  return registrar->RegisterProtocolHandler(aProtocol, aURI, aTitle,
++                                            win->GetOuterWindow());
++}
++
++NS_IMETHODIMP
++Navigator::MozIsLocallyAvailable(const nsAString &aURI,
++                                 bool aWhenOffline,
++                                 bool* aIsAvailable)
++{
++  nsCOMPtr<nsIURI> uri;
++  nsresult rv = NS_NewURI(getter_AddRefs(uri), aURI);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // This method of checking the cache will only work for http/https urls.
++  bool match;
++  rv = uri->SchemeIs("http", &match);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  if (!match) {
++    rv = uri->SchemeIs("https", &match);
++    NS_ENSURE_SUCCESS(rv, rv);
++    if (!match) {
++      return NS_ERROR_DOM_BAD_URI;
++    }
++  }
++
++  // Same origin check.
++  nsCOMPtr<nsIJSContextStack> stack = do_GetService(sJSStackContractID);
++  NS_ENSURE_TRUE(stack, NS_ERROR_FAILURE);
++
++  JSContext* cx = nsnull;
++  rv = stack->Peek(&cx);
++  NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
++
++  rv = nsContentUtils::GetSecurityManager()->CheckSameOrigin(cx, uri);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // These load flags cause an error to be thrown if there is no
++  // valid cache entry, and skip the load if there is.
++  // If the cache is busy, assume that it is not yet available rather
++  // than waiting for it to become available.
++  PRUint32 loadFlags = nsIChannel::INHIBIT_CACHING |
++                       nsICachingChannel::LOAD_NO_NETWORK_IO |
++                       nsICachingChannel::LOAD_ONLY_IF_MODIFIED |
++                       nsICachingChannel::LOAD_BYPASS_LOCAL_CACHE_IF_BUSY;
++
++  if (aWhenOffline) {
++    loadFlags |= nsICachingChannel::LOAD_CHECK_OFFLINE_CACHE |
++                 nsICachingChannel::LOAD_ONLY_FROM_CACHE |
++                 nsIRequest::LOAD_FROM_CACHE;
++  }
++
++  nsCOMPtr<nsIChannel> channel;
++  rv = NS_NewChannel(getter_AddRefs(channel), uri,
++                     nsnull, nsnull, nsnull, loadFlags);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCOMPtr<nsIInputStream> stream;
++  rv = channel->Open(getter_AddRefs(stream));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  stream->Close();
++
++  nsresult status;
++  rv = channel->GetStatus(&status);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  if (NS_FAILED(status)) {
++    *aIsAvailable = false;
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
++  return httpChannel->GetRequestSucceeded(aIsAvailable);
++}
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigatorGeolocation
++//*****************************************************************************
++
++NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
++{
++  NS_ENSURE_ARG_POINTER(_retval);
++  *_retval = nsnull;
++
++  if (!Preferences::GetBool("geo.enabled", true)) {
++    return NS_OK;
++  }
++
++  if (mGeolocation) {
++    NS_ADDREF(*_retval = mGeolocation);
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
++    return NS_ERROR_FAILURE;
++  }
++
++  mGeolocation = new nsGeolocation();
++  if (!mGeolocation) {
++    return NS_ERROR_FAILURE;
++  }
++
++  if (NS_FAILED(mGeolocation->Init(win->GetOuterWindow()))) {
++    mGeolocation = nsnull;
++    return NS_ERROR_FAILURE;
++  }
++
++  NS_ADDREF(*_retval = mGeolocation);
++  return NS_OK;
++}
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigatorDesktopNotification
++//*****************************************************************************
++
++NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aRetVal)
++{
++  NS_ENSURE_ARG_POINTER(aRetVal);
++  *aRetVal = nsnull;
++
++  if (mNotification) {
++    NS_ADDREF(*aRetVal = mNotification);
++    return NS_OK;
++  }
++
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++  NS_ENSURE_TRUE(win && win->GetDocShell(), NS_ERROR_FAILURE);
++
++  mNotification = new nsDesktopNotificationCenter(win);
++
++  NS_ADDREF(*aRetVal = mNotification);
++  return NS_OK;
++}
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigatorBattery
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::GetMozBattery(nsIDOMMozBatteryManager** aBattery)
++{
++  if (!mBatteryManager) {
++    *aBattery = nsnull;
++
++    nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++    NS_ENSURE_TRUE(win->GetDocShell(), NS_OK);
++
++    mBatteryManager = new battery::BatteryManager();
++    mBatteryManager->Init(win);
++  }
++
++  NS_ADDREF(*aBattery = mBatteryManager);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::GetMozPower(nsIDOMMozPowerManager** aPower)
++{
++  *aPower = nsnull;
++
++  if (!mPowerManager) {
++    nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
++    NS_ENSURE_TRUE(win, NS_OK);
++
++    mPowerManager = new power::PowerManager();
++    mPowerManager->Init(win);
++  }
++
++  nsCOMPtr<nsIDOMMozPowerManager> power =
++    do_QueryInterface(NS_ISUPPORTS_CAST(nsIDOMMozPowerManager*, mPowerManager));
++  power.forget(aPower);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++Navigator::RequestWakeLock(const nsAString &aTopic, nsIDOMMozWakeLock **aWakeLock)
++{
++  *aWakeLock = nsnull;
++
++  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
++  NS_ENSURE_TRUE(win, NS_OK);
++
++  nsCOMPtr<nsIPowerManagerService> pmService =
++    do_GetService(POWERMANAGERSERVICE_CONTRACTID);
++  NS_ENSURE_TRUE(pmService, NS_OK);
++
++  return pmService->NewWakeLock(aTopic, win, aWakeLock);
++}
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigatorSms
++//*****************************************************************************
++
++bool
++Navigator::IsSmsAllowed() const
++{
++  static const bool defaultSmsPermission = false;
++
++  // First of all, the general pref has to be turned on.
++  if (!Preferences::GetBool("dom.sms.enabled", defaultSmsPermission)) {
++    return false;
++  }
++
++  // In addition of having 'dom.sms.enabled' set to true, we require the
++  // website to be whitelisted. This is a temporary 'security model'.
++  // 'dom.sms.whitelist' has to contain comma-separated values of URI prepath.
++  // For local files, "file://" must be listed.
++  // For data-urls: "moz-nullprincipal:".
++  // Chrome files also have to be whitelisted for the moment.
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetDocShell()) {
++    return defaultSmsPermission;
++  }
++
++  nsCOMPtr<nsIDocument> doc = do_QueryInterface(win->GetExtantDocument());
++  if (!doc) {
++    return defaultSmsPermission;
++  }
++
++  nsCOMPtr<nsIURI> uri;
++  doc->NodePrincipal()->GetURI(getter_AddRefs(uri));
++
++  if (!uri) {
++    return defaultSmsPermission;
++  }
++
++  nsCAutoString uriPrePath;
++  uri->GetPrePath(uriPrePath);
++
++  const nsAdoptingString& whitelist =
++    Preferences::GetString("dom.sms.whitelist");
++
++  nsCharSeparatedTokenizer tokenizer(whitelist, ',',
++                                     nsCharSeparatedTokenizerTemplate<>::SEPARATOR_OPTIONAL);
++
++  while (tokenizer.hasMoreTokens()) {
++    const nsSubstring& whitelistItem = tokenizer.nextToken();
++
++    if (NS_ConvertUTF16toUTF8(whitelistItem).Equals(uriPrePath)) {
++      return true;
++    }
++  }
++
++  // The current page hasn't been whitelisted.
++  return false;
++}
++
++bool
++Navigator::IsSmsSupported() const
++{
++#ifdef MOZ_WEBSMS_BACKEND
++  nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
++  NS_ENSURE_TRUE(smsService, false);
++
++  bool result = false;
++  smsService->HasSupport(&result);
++
++  return result;
++#else
++  return false;
++#endif
++}
++
++NS_IMETHODIMP
++Navigator::GetMozSms(nsIDOMMozSmsManager** aSmsManager)
++{
++  *aSmsManager = nsnull;
++
++  if (!mSmsManager) {
++    if (!IsSmsSupported() || !IsSmsAllowed()) {
++      return NS_OK;
++    }
++
++    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
++    NS_ENSURE_TRUE(window && window->GetDocShell(), NS_OK);
++
++    mSmsManager = new sms::SmsManager();
++    mSmsManager->Init(window);
++  }
++
++  NS_ADDREF(*aSmsManager = mSmsManager);
++
++  return NS_OK;
++}
++
++#ifdef MOZ_B2G_RIL
++
++//*****************************************************************************
++//    nsNavigator::nsIDOMNavigatorTelephony
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::GetMozTelephony(nsIDOMTelephony** aTelephony)
++{
++  nsCOMPtr<nsIDOMTelephony> telephony = mTelephony;
++
++  if (!telephony) {
++    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
++    NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
++
++    nsresult rv = NS_NewTelephony(window, getter_AddRefs(mTelephony));
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    // mTelephony may be null here!
++    telephony = mTelephony;
++  }
++
++  telephony.forget(aTelephony);
++  return NS_OK;
++}
++
++#endif // MOZ_B2G_RIL
++
++//*****************************************************************************
++//    Navigator::nsIDOMNavigatorNetwork
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::GetMozConnection(nsIDOMMozConnection** aConnection)
++{
++  *aConnection = nsnull;
++
++  if (!mConnection) {
++    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
++    NS_ENSURE_TRUE(window && window->GetDocShell(), NS_OK);
++
++    mConnection = new network::Connection();
++    mConnection->Init(window);
++  }
++
++  NS_ADDREF(*aConnection = mConnection);
++  return NS_OK;
++}
++
++#ifdef MOZ_B2G_BT
++//*****************************************************************************
++//    nsNavigator::nsIDOMNavigatorBluetooth
++//*****************************************************************************
++
++NS_IMETHODIMP
++Navigator::GetMozBluetooth(nsIDOMBluetoothAdapter** aBluetooth)
++{
++  nsCOMPtr<nsIDOMBluetoothAdapter> bluetooth = mBluetooth;
++
++  if (!bluetooth) {
++    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
++    NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
++
++    mBluetooth = new bluetooth::BluetoothAdapter();
++
++    bluetooth = mBluetooth;
++  }
++
++  bluetooth.forget(aBluetooth);
++  return NS_OK;
++}
++#endif //MOZ_B2G_BT
++
++size_t
++Navigator::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
++{
++  size_t n = aMallocSizeOf(this);
++
++  // TODO: add SizeOfIncludingThis() to nsMimeTypeArray, bug 674113.
++  // TODO: add SizeOfIncludingThis() to nsPluginArray, bug 674114.
++  // TODO: add SizeOfIncludingThis() to nsGeolocation, bug 674115.
++  // TODO: add SizeOfIncludingThis() to nsDesktopNotificationCenter, bug 674116.
++
++  return n;
++}
++
++void
++Navigator::SetWindow(nsPIDOMWindow *aInnerWindow)
++{
++  NS_ASSERTION(aInnerWindow->IsInnerWindow(),
++               "Navigator must get an inner window!");
++  mWindow = do_GetWeakReference(aInnerWindow);
++}
++
++} // namespace dom
++} // namespace mozilla
++
++nsresult
++NS_GetNavigatorUserAgent(nsAString& aUserAgent)
++{
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString ua;
++  rv = service->GetUserAgent(ua);
++  CopyASCIItoUTF16(ua, aUserAgent);
++
++  return rv;
++}
++
++nsresult
++NS_GetNavigatorPlatform(nsAString& aPlatform)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      mozilla::Preferences::GetString("general.platform.override");
++
++    if (override) {
++      aPlatform = override;
++      return NS_OK;
++    }
++  }
++
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Sorry for the #if platform ugliness, but Communicator is likewise
++  // hardcoded and we are seeking backward compatibility here (bug 47080).
++#if defined(_WIN64)
++  aPlatform.AssignLiteral("Win64");
++#elif defined(WIN32)
++  aPlatform.AssignLiteral("Win32");
++#elif defined(XP_MACOSX) && defined(__ppc__)
++  aPlatform.AssignLiteral("MacPPC");
++#elif defined(XP_MACOSX) && defined(__i386__)
++  aPlatform.AssignLiteral("MacIntel");
++#elif defined(XP_MACOSX) && defined(__x86_64__)
++  aPlatform.AssignLiteral("MacIntel");
++#elif defined(XP_OS2)
++  aPlatform.AssignLiteral("OS/2");
++#else
++  // XXX Communicator uses compiled-in build-time string defines
++  // to indicate the platform it was compiled *for*, not what it is
++  // currently running *on* which is what this does.
++  nsCAutoString plat;
++  rv = service->GetOscpu(plat);
++  CopyASCIItoUTF16(plat, aPlatform);
++#endif
++
++  return rv;
++}
++nsresult
++NS_GetNavigatorAppVersion(nsAString& aAppVersion)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      mozilla::Preferences::GetString("general.appversion.override");
++
++    if (override) {
++      aAppVersion = override;
++      return NS_OK;
++    }
++  }
++
++  nsresult rv;
++
++  nsCOMPtr<nsIHttpProtocolHandler>
++    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCAutoString str;
++  rv = service->GetAppVersion(str);
++  CopyASCIItoUTF16(str, aAppVersion);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  aAppVersion.AppendLiteral(" (");
++
++  rv = service->GetPlatform(str);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  AppendASCIItoUTF16(str, aAppVersion);
++  aAppVersion.Append(PRUnichar(')'));
++
++  return rv;
++}
++
++nsresult
++NS_GetNavigatorAppName(nsAString& aAppName)
++{
++  if (!nsContentUtils::IsCallerTrustedForRead()) {
++    const nsAdoptingString& override =
++      mozilla::Preferences::GetString("general.appname.override");
++
++    if (override) {
++      aAppName = override;
++      return NS_OK;
++    }
++  }
++
++  aAppName.AssignLiteral("Netscape");
++  return NS_OK;
++}
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -40,27 +40,29 @@
+  *
+  * ***** END LICENSE BLOCK ***** */
  
- ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+ #ifndef mozilla_dom_Navigator_h
+ #define mozilla_dom_Navigator_h
+ 
+ #include "nsIDOMNavigator.h"
+ #include "nsIDOMNavigatorGeolocation.h"
++#include "nsIDOMUserMedia.h"
+ #include "nsIDOMNavigatorDesktopNotification.h"
+ #include "nsIDOMClientInformation.h"
+ #include "nsIDOMNavigatorBattery.h"
+ #include "nsIDOMNavigatorSms.h"
+ #include "nsIDOMNavigatorNetwork.h"
+ #include "nsAutoPtr.h"
+ #include "nsWeakReference.h"
+ 
+ class nsPluginArray;
+ class nsMimeTypeArray;
+ class nsGeolocation;
++class nsUserMedia;
+ class nsDesktopNotificationCenter;
+ class nsPIDOMWindow;
+ class nsIDOMMozConnection;
+ 
+ #ifdef MOZ_B2G_RIL
+ #include "nsIDOMNavigatorTelephony.h"
+ class nsIDOMTelephony;
+ #endif
+@@ -91,16 +93,17 @@ class Connection;
+ 
+ namespace power {
+ class PowerManager;
+ } // namespace power
+ 
+ class Navigator : public nsIDOMNavigator
+                 , public nsIDOMClientInformation
+                 , public nsIDOMNavigatorGeolocation
++                , public nsIDOMGetUserMedia
+                 , public nsIDOMNavigatorDesktopNotification
+                 , public nsIDOMMozNavigatorBattery
+                 , public nsIDOMMozNavigatorSms
+ #ifdef MOZ_B2G_RIL
+                 , public nsIDOMNavigatorTelephony
+ #endif
+                 , public nsIDOMMozNavigatorNetwork
+ #ifdef MOZ_B2G_BT
+@@ -110,16 +113,17 @@ class Navigator : public nsIDOMNavigator
+ public:
+   Navigator(nsPIDOMWindow *aInnerWindow);
+   virtual ~Navigator();
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSIDOMNAVIGATOR
+   NS_DECL_NSIDOMCLIENTINFORMATION
+   NS_DECL_NSIDOMNAVIGATORGEOLOCATION
++  NS_DECL_NSIDOMGETUSERMEDIA
+   NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
+   NS_DECL_NSIDOMMOZNAVIGATORBATTERY
+   NS_DECL_NSIDOMMOZNAVIGATORSMS
+ #ifdef MOZ_B2G_RIL
+   NS_DECL_NSIDOMNAVIGATORTELEPHONY
+ #endif
+   NS_DECL_NSIDOMMOZNAVIGATORNETWORK
+ 
+@@ -145,16 +149,17 @@ public:
+ 
+ private:
+   bool IsSmsAllowed() const;
+   bool IsSmsSupported() const;
+ 
+   nsRefPtr<nsMimeTypeArray> mMimeTypes;
+   nsRefPtr<nsPluginArray> mPlugins;
+   nsRefPtr<nsGeolocation> mGeolocation;
++  nsRefPtr<nsUserMedia> mUserMedia;
+   nsRefPtr<nsDesktopNotificationCenter> mNotification;
+   nsRefPtr<battery::BatteryManager> mBatteryManager;
+   nsRefPtr<power::PowerManager> mPowerManager;
+   nsRefPtr<sms::SmsManager> mSmsManager;
+ #ifdef MOZ_B2G_RIL
+   nsCOMPtr<nsIDOMTelephony> mTelephony;
+ #endif
+   nsRefPtr<network::Connection> mConnection;
+diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
+--- a/dom/base/nsDOMClassInfo.cpp
++++ b/dom/base/nsDOMClassInfo.cpp
+@@ -436,16 +436,19 @@
+ #include "nsIImageDocument.h"
+ 
+ // Storage includes
+ #include "nsDOMStorage.h"
+ 
+ // Drag and drop
+ #include "nsIDOMDataTransfer.h"
+ 
++// UserMedia
++#include "nsIDOMUserMedia.h"
++
+ // Geolocation
+ #include "nsIDOMGeoGeolocation.h"
+ #include "nsIDOMGeoPosition.h"
+ #include "nsIDOMGeoPositionCoords.h"
+ #include "nsIDOMGeoPositionError.h"
+ 
+ // Workers
+ #include "mozilla/dom/workers/Workers.h"
+@@ -2416,16 +2419,17 @@ nsDOMClassInfo::Init()
+   DOM_CLASSINFO_MAP_END
+ 
+   DOM_CLASSINFO_MAP_BEGIN(Location, nsIDOMLocation)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMLocation)
+   DOM_CLASSINFO_MAP_END
+ 
+   DOM_CLASSINFO_MAP_BEGIN(Navigator, nsIDOMNavigator)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigator)
++    DOM_CLASSINFO_MAP_ENTRY(nsIDOMGetUserMedia)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorGeolocation)
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMNavigatorDesktopNotification,
+                                         Navigator::HasDesktopNotificationSupport())
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMClientInformation)
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMMozNavigatorBattery,
+                                         battery::BatteryManager::HasSupport())
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_B2G_RIL
 diff --git a/dom/interfaces/media/Makefile.in b/dom/interfaces/media/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -224,14 +2517,14 @@ new file mode 100644
 +# for the specific language governing rights and limitations under the
 +# License.
 +#
-+# The Original Code is WebRTC.
++# The Original Code is mozilla.org build system.
 +#
 +# The Initial Developer of the Original Code is Mozilla Foundation
 +# Portions created by the Initial Developer are Copyright (C) 2012
 +# the Initial Developer. All Rights Reserved.
 +#
 +# Contributor(s):
-+#  Anant Narayanan <anant@mozilla.com>
++#  Anant Narayanan <anant@kix.in>
 +#
 +# Alternatively, the contents of this file may be used under the terms of
 +# either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -260,15 +2553,15 @@ new file mode 100644
 +GRE_MODULE     = 1
 +
 +XPIDLSRCS = \
-+            nsIDOMMedia.idl \
++            nsIDOMUserMedia.idl \
 +            $(NULL)
 +
 +include $(topsrcdir)/config/rules.mk
-diff --git a/dom/interfaces/media/nsIDOMMedia.idl b/dom/interfaces/media/nsIDOMMedia.idl
+diff --git a/dom/interfaces/media/nsIDOMUserMedia.idl b/dom/interfaces/media/nsIDOMUserMedia.idl
 new file mode 100644
 --- /dev/null
-+++ b/dom/interfaces/media/nsIDOMMedia.idl
-@@ -0,0 +1,64 @@
++++ b/dom/interfaces/media/nsIDOMUserMedia.idl
+@@ -0,0 +1,74 @@
 +/* ***** BEGIN LICENSE BLOCK *****
 + * Version: MPL 1.1/GPL 2.0/LGPL 2.1
 + *
@@ -282,14 +2575,14 @@ new file mode 100644
 + * for the specific language governing rights and limitations under the
 + * License.
 + *
-+ * The Original Code is WebRTC.
++ * The Original Code is Mozilla code.
 + *
-+ * The Initial Developer of the Original Code is Mozilla Foundation
++ * The Initial Developer of the Original Code is the Mozilla Foundation.
 + * Portions created by the Initial Developer are Copyright (C) 2012
 + * the Initial Developer. All Rights Reserved.
 + *
 + * Contributor(s):
-+ *  Anant Narayanan <anant@mozilla.com>
++ *  Anant Narayanan <anant@kix.in>
 + *
 + * Alternatively, the contents of this file may be used under the terms of
 + * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -306,30 +2599,40 @@ new file mode 100644
 + * ***** END LICENSE BLOCK ***** */
 +
 +#include "domstubs.idl"
++#include "nsIDOMCanvasRenderingContext2D.idl"
++
++[scriptable, uuid(2d2d11fc-41ed-4556-b922-79a3aca64b27)]
++interface nsIDOMUserMediaStream : nsISupports
++{
++  void startWithCanvas(in nsIDOMCanvasRenderingContext2D ctx);
++  void stop();
++};
 +
 +[scriptable, uuid(64334e6b-aaba-4d18-a35e-92239060fb8a)]
-+interface mozIDOMGetUserMediaError : nsISupports
++interface nsIDOMGetUserMediaError : nsISupports
 +{
++  const unsigned short UNKNOWN_ERROR = 0;
 +  const unsigned short PERMISSION_DENIED = 1;
 +  readonly attribute short code;
 +};
 +
 +[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
-+interface mozIDOMGetUserMediaSuccessCallback : nsISupports
++interface nsIDOMGetUserMediaSuccessCallback : nsISupports
 +{
-+  void handleEvent();
++  void onSuccess(in nsIDOMUserMediaStream stream);
 +};
 +
 +[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
-+interface mozIDOMGetUserMediaErrorCallback : nsISupports
++interface nsIDOMGetUserMediaErrorCallback : nsISupports
 +{
-+  void handleEvent(in mozIDOMGetUserMediaError error);
++  void onError(in nsIDOMGetUserMediaError error);
 +};
 +
 +[scriptable, uuid(05083c6a-a35c-4988-ba73-a226540ea5db)]
-+interface mozIDOMGetUserMedia : nsISupports
++interface nsIDOMGetUserMedia : nsISupports
 +{
 +  void getUserMedia(in jsval options,
-+    in mozIDOMGetUserMediaSuccessCallback success,
-+    [optional] in mozIDOMGetUserMediaErrorCallback error);
++    in nsIDOMGetUserMediaSuccessCallback success,
++    [optional] in nsIDOMGetUserMediaErrorCallback error,
++    [optional] in nsIDOMCanvasRenderingContext2D ctx);
 +};
