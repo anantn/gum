@@ -1,0 +1,142 @@
+# HG changeset patch
+# Parent ff154c883abafc8ff619d32aa9e2faa474a5bdb6
+# User Anant Narayanan <anant@kix.in>
+Abstract media engine interface
+
+diff --git a/content/media/Makefile.in b/content/media/Makefile.in
+--- a/content/media/Makefile.in
++++ b/content/media/Makefile.in
+@@ -58,16 +58,17 @@ EXPORTS = \
+   MediaStreamGraph.h \
+   nsAudioAvailableEventManager.h \
+   nsBuiltinDecoder.h \
+   nsBuiltinDecoderStateMachine.h \
+   nsBuiltinDecoderReader.h \
+   nsDOMMediaStream.h \
+   nsMediaCache.h \
+   nsMediaDecoder.h \
++  nsMediaEngine.h \
+   SharedBuffer.h \
+   StreamBuffer.h \
+   TimeVarying.h \
+   VideoFrameContainer.h \
+   VideoUtils.h \
+   VideoSegment.h \
+   $(NULL)
+ 
+diff --git a/content/media/nsMediaEngine.h b/content/media/nsMediaEngine.h
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsMediaEngine.h
+@@ -0,0 +1,110 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef NSMEDIAENGINE_H_
++#define NSMEDIAENGINE_H_
++
++#include "nsMediaEngine.h"
++#include "MediaStreamGraph.h"
++
++namespace mozilla {
++
++/**
++ * Abstract interface for managing audio and video devices. Each platform
++ * must implement a concrete class that will map these classes and methods
++ * to the appropriate backend. For example, on Desktop platforms, these will
++ * correspond to equivalent webrtc (GIPS) calls, and on B2G they will map to
++ * a Gonk interface.
++ */
++class nsMediaEngineVideoSource;
++class nsMediaEngineAudioSource;
++
++class nsMediaEngine
++{
++public:
++  virtual ~nsMediaEngine() {};
++  
++  /* Return an array of video sources. Also include devices that are
++   * currently unavailable. */
++  virtual nsMediaEngineVideoSource* EnumerateVideoDevices() = 0;
++
++  /* Return an array of audio sources. Also include devices that are
++   * currently unavailable. */
++  virtual nsMediaEngineAudioSource* EnumerateAudioDevices() = 0;
++};
++
++/**
++ * Common abstract base class for audio and video sources.
++ */
++class nsMediaEngineSource
++{
++public:
++  virtual ~nsMediaEngineSource() {};
++  
++  virtual nsresult GetName(nsAString&) = 0;
++  virtual nsresult GetUUID(nsAString&) = 0;
++
++  /* This call reserves but does not start the device. */
++  virtual nsresult Allocate() = 0;
++  /* Release the device back to the system. */
++  virtual nsresult Deallocate() = 0;
++
++  /* Start the device and return a MediaStream to which live data will be
++   * written by your engine. */
++  virtual SourceMediaStream* Start() = 0;
++  /* Stop the device and release the corresponding MediaStream */
++  virtual nsresult Stop() = 0;
++  /* It is an error to call Start() before an Allocate(), and Stop() before
++   * a Start(). Only Allocate() may be called after a Deallocate(). */
++};
++
++/**
++ * Video source and friends.
++ */
++enum mediaEngineVideoType {
++  kVideoI420,
++  kVideoYV12,
++  kVideoYUY2,
++  kVideoUYVY,
++  kVideoIYUV,
++  kVideoARGB,
++  kVideoRGB24,
++  kVideoUnknown
++};
++
++enum mediaEngineVideoCodecType {
++  kVideoCodecH263,
++  kVideoCodecVP8,
++  kVideoCodecI420
++};
++
++typedef struct mediaEngineVideoOptions {
++  bool interlaced;
++  unsigned int width;
++  unsigned int height;
++  unsigned int maxFPS;
++  mediaEngineVideoType type;
++  mediaEngineVideoCodecType codecType;
++} mediaEngineVideoOptions;
++
++class nsMediaEngineVideoSource : public nsMediaEngineSource
++{
++public:
++  virtual ~nsMediaEngineVideoSource() {};
++  /* Fills the given struct with appropriate values for all fields. */
++  virtual nsresult GetOptions(mediaEngineVideoOptions*) = 0;
++};
++
++/**
++ * Audio source and friends.
++ */
++class nsMediaEngineAudioSource : public nsMediaEngineSource
++{
++public:
++  virtual ~nsMediaEngineAudioSource() {};
++};
++
++}
++
++#endif /* NSMEDIAENGINE_H_ */
+\ No newline at end of file

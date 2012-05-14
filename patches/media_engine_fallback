@@ -1,0 +1,415 @@
+# HG changeset patch
+# Parent 42dea4622b0fb53dab7acf515b55824bd6918e21
+# User Anant Narayanan <anant@kix.in>
+Implement fallback media engine
+
+diff --git a/content/media/Makefile.in b/content/media/Makefile.in
+--- a/content/media/Makefile.in
++++ b/content/media/Makefile.in
+@@ -59,16 +59,17 @@ EXPORTS = \
+   nsAudioAvailableEventManager.h \
+   nsBuiltinDecoder.h \
+   nsBuiltinDecoderStateMachine.h \
+   nsBuiltinDecoderReader.h \
+   nsDOMMediaStream.h \
+   nsMediaCache.h \
+   nsMediaDecoder.h \
+   nsMediaEngine.h \
++  nsMediaEngineDefault.h \
+   SharedBuffer.h \
+   StreamBuffer.h \
+   TimeVarying.h \
+   VideoFrameContainer.h \
+   VideoUtils.h \
+   VideoSegment.h \
+   $(NULL)
+ 
+@@ -79,16 +80,17 @@ CPPSRCS = \
+   MediaStreamGraph.cpp \
+   nsAudioAvailableEventManager.cpp \
+   nsBuiltinDecoder.cpp \
+   nsBuiltinDecoderStateMachine.cpp \
+   nsBuiltinDecoderReader.cpp \
+   nsDOMMediaStream.cpp \
+   nsMediaCache.cpp \
+   nsMediaDecoder.cpp \
++  nsMediaEngineDefault.cpp \
+   StreamBuffer.cpp \
+   VideoFrameContainer.cpp \
+   VideoUtils.cpp \
+   $(NULL)
+ 
+ ifdef MOZ_SYDNEYAUDIO
+ EXPORTS += \
+   nsAudioStream.h \
+diff --git a/content/media/nsMediaEngineDefault.cpp b/content/media/nsMediaEngineDefault.cpp
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsMediaEngineDefault.cpp
+@@ -0,0 +1,246 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsMediaEngineDefault.h"
++
++#define WIDTH 320
++#define HEIGHT 240
++#define FPS 10
++#define CHANNELS 1
++
++#define TRACK_VIDEO 1
++#define TRACK_AUDIO 2
++#define RATE USECS_PER_S
++
++namespace mozilla {
++
++/**
++ * Default video source.
++ */
++nsresult
++nsMediaEngineDefaultVideoSource::GetName(nsAString& aName)
++{
++  aName.Assign(NS_LITERAL_STRING("Default Video Device"));
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultVideoSource::GetUUID(nsAString& aUUID)
++{
++  aUUID.Assign(NS_LITERAL_STRING("cb549672-c93c-46d9-b827-b24be04bfb8b"));
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultVideoSource::Allocate()
++{
++  if (mState != kReleased) {
++    return NS_ERROR_FAILURE;
++  }
++  mState = kAllocated;
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultVideoSource::Deallocate()
++{
++  if (mState != kStopped && mState != kAllocated) {
++    return NS_ERROR_FAILURE;
++  }
++  mState = kReleased;
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultVideoSource::GetOptions(mediaEngineVideoOptions *aOpts)
++{
++  aOpts->interlaced = false;
++  aOpts->width = WIDTH;
++  aOpts->height = HEIGHT;
++  aOpts->maxFPS = FPS;
++  aOpts->type = kVideoI420;
++  aOpts->codecType = kVideoCodecI420;
++  return NS_OK;
++}
++
++SourceMediaStream*
++nsMediaEngineDefaultVideoSource::Start()
++{
++  if (mState != kAllocated) {
++    return NULL;
++  }
++
++  mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
++  if (!mTimer) {
++    return NULL;
++  }
++
++  mStream = nsDOMMediaStream::CreateInputStream();
++  if (!mStream) {
++    return NULL;
++  }
++  mSource = mStream->GetStream()->AsSourceStream();
++
++  VideoSegment *segment = new VideoSegment();
++  mSource->AddTrack(TRACK_VIDEO, RATE, 0, segment);
++
++  mImageContainer = layers::LayerManager::CreateImageContainer();
++  mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
++  mState = kStarted;
++  return mSource;
++}
++
++nsresult
++nsMediaEngineDefaultVideoSource::Stop()
++{
++  if (mState != kStarted) {
++    return NS_ERROR_FAILURE;
++  }
++  if (!mTimer) {
++    return NS_ERROR_FAILURE;
++  }
++
++  mTimer->Cancel();
++  mTimer = NULL;
++  mState = kStopped;
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++nsMediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
++{
++  typedef layers::Image Image;
++  typedef layers::PlanarYCbCrImage PlanarYCbCrImage;
++
++  ReentrantMonitorAutoEnter enter(mMonitor);
++
++  Image::Format format = Image::PLANAR_YCBCR;
++  nsRefPtr<Image> image = mImageContainer->CreateImage(&format, 1);
++
++  PlanarYCbCrImage* videoImage = static_cast<PlanarYCbCrImage*> (image.get());
++
++  PRUint8* frame = (PRUint8*) PR_Calloc((WIDTH * HEIGHT) / 2, 3);
++  const PRUint32 mFps = FPS;
++  const PRUint8 lumaBpp = 8;
++  const PRUint8 chromaBpp = 4; 
++
++  PlanarYCbCrImage::Data data;
++  data.mYChannel = frame;
++  data.mYSize = gfxIntSize(WIDTH, HEIGHT);
++  data.mYStride = WIDTH * lumaBpp / 8.0;
++  data.mCbCrStride = WIDTH * chromaBpp / 8.0;
++  data.mCbChannel = frame + HEIGHT * data.mYStride;
++  data.mCrChannel = data.mCbChannel + HEIGHT * data.mCbCrStride / 2;
++  data.mCbCrSize = gfxIntSize(WIDTH / 2, HEIGHT / 2);
++  data.mPicX = 0;
++  data.mPicY = 0;
++  data.mPicSize = gfxIntSize(WIDTH, HEIGHT);
++  data.mStereoMode = layers::STEREO_MODE_MONO;
++
++  videoImage->SetData(data); // Copies data, so we can free?
++
++  VideoSegment *segment = new VideoSegment();
++  segment->AppendFrame(image.forget(), USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
++  mSource->AppendToTrack(TRACK_VIDEO, segment);
++
++  PR_Free(frame);
++  return NS_OK;
++}
++
++/**
++ * Default audio source.
++ */
++nsresult
++nsMediaEngineDefaultAudioSource::GetName(nsAString& aName)
++{
++  aName.Assign(NS_LITERAL_STRING("Default Audio Device"));
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultAudioSource::GetUUID(nsAString& aUUID)
++{
++  aUUID.Assign(NS_LITERAL_STRING("2d078779-a26a-449a-b2bb-c7ff624edbca"));
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultAudioSource::Allocate()
++{
++  if (mState != kReleased) {
++    return NS_ERROR_FAILURE;
++  }
++  mState = kAllocated;
++  return NS_OK;
++}
++
++nsresult
++nsMediaEngineDefaultAudioSource::Deallocate()
++{
++  if (mState != kStopped && mState != kAllocated) {
++    return NS_ERROR_FAILURE;
++  }
++  mState = kReleased;
++  return NS_OK;
++}
++
++SourceMediaStream*
++nsMediaEngineDefaultAudioSource::Start()
++{
++  if (mState != kAllocated) {
++    return NULL;
++  }
++
++  mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
++  if (!mTimer) {
++    return NULL;
++  }
++
++  mStream = nsDOMMediaStream::CreateInputStream();
++  if (!mStream) {
++    return NULL;
++  }
++  mSource = mStream->GetStream()->AsSourceStream();
++
++  AudioSegment *segment = new AudioSegment();
++  segment->Init(CHANNELS);
++  mSource->AddTrack(TRACK_AUDIO, RATE, 0, segment);
++
++  // 1 Audio frame per Video frame.
++  mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
++  mState = kStarted;
++  return mSource;
++}
++
++nsresult
++nsMediaEngineDefaultAudioSource::Stop()
++{
++  if (mState != kStarted) {
++    return NS_ERROR_FAILURE;
++  }
++  if (!mTimer) {
++    return NS_ERROR_FAILURE;
++  }
++
++  mTimer->Cancel();
++  mTimer = NULL;
++  mState = kStopped;
++  return NS_OK;
++}
++
++NS_IMETHODIMP
++nsMediaEngineDefaultAudioSource::Notify(nsITimer* aTimer)
++{
++  ReentrantMonitorAutoEnter enter(mMonitor);
++
++  AudioSegment *segment = new AudioSegment();
++  segment->Init(CHANNELS);
++  segment->InsertNullDataAtStart(1); // One tick?
++
++  mSource->AppendToTrack(TRACK_AUDIO, segment);
++
++  return NS_OK;
++}
++
++}
+diff --git a/content/media/nsMediaEngineDefault.h b/content/media/nsMediaEngineDefault.h
+new file mode 100644
+--- /dev/null
++++ b/content/media/nsMediaEngineDefault.h
+@@ -0,0 +1,114 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef NSMEDIAENGINEDEFAULT_H_
++#define NSMEDIAENGINEDEFAULT_H_
++
++#include "prmem.h"
++#include "nsITimer.h"
++
++#include "nsCOMPtr.h"
++#include "nsMediaEngine.h"
++#include "nsDOMMediaStream.h"
++#include "nsComponentManagerUtils.h"
++
++#include "Layers.h"
++#include "VideoUtils.h"
++#include "ImageLayers.h"
++#include "VideoSegment.h"
++#include "AudioSegment.h"
++#include "StreamBuffer.h"
++#include "MediaStreamGraph.h"
++
++namespace mozilla {
++
++/**
++ * The default implementation of the MediaEngine interface.
++ */
++
++enum defaultEngineState {
++  kAllocated,
++  kStarted,
++  kStopped,
++  kReleased
++};
++
++class nsMediaEngineDefaultVideoSource : public nsITimerCallback,
++                                        public nsMediaEngineVideoSource
++                                        
++{
++public:
++  nsMediaEngineDefaultVideoSource() : mState(kReleased), mTimer(NULL),
++                                      mStream(NULL), mMonitor("Video.Engine") {}
++  virtual ~nsMediaEngineDefaultVideoSource();
++
++  nsresult GetName(nsAString&);
++  nsresult GetUUID(nsAString&);
++  nsresult Allocate();
++  nsresult Deallocate();
++  SourceMediaStream* Start();
++  nsresult GetOptions(mediaEngineVideoOptions*);
++  nsresult Stop();
++
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSITIMERCALLBACK
++
++protected:
++  defaultEngineState mState;
++  nsCOMPtr<nsITimer> mTimer;
++  ReentrantMonitor mMonitor;
++  SourceMediaStream* mSource;
++  nsCOMPtr<nsDOMMediaStream> mStream;
++  nsRefPtr<layers::ImageContainer> mImageContainer;
++};
++
++class nsMediaEngineDefaultAudioSource : public nsITimerCallback,
++                                        public nsMediaEngineAudioSource
++                                        
++{
++public:
++  nsMediaEngineDefaultAudioSource() : mState(kReleased), mTimer(NULL),
++                                      mStream(NULL), mMonitor("Audio.Engine") {}
++  virtual ~nsMediaEngineDefaultAudioSource();
++
++  nsresult GetName(nsAString&);
++  nsresult GetUUID(nsAString&);
++  nsresult Allocate();
++  nsresult Deallocate();
++  SourceMediaStream* Start();
++  nsresult Stop();
++
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSITIMERCALLBACK
++
++protected:
++  defaultEngineState mState;
++  nsCOMPtr<nsITimer> mTimer;
++  ReentrantMonitor mMonitor;
++  SourceMediaStream* mSource;
++  nsCOMPtr<nsDOMMediaStream> mStream;
++};
++
++class nsMediaEngineDefault : public nsMediaEngine
++{
++public:
++  nsMediaEngineDefault() {
++    vSources = new nsMediaEngineDefaultVideoSource[1];
++    aSources = new nsMediaEngineDefaultAudioSource[1];
++  }
++  nsMediaEngineVideoSource* EnumerateVideoDevices() {
++    return vSources;
++  }
++  nsMediaEngineAudioSource* EnumerateAudioDevices() {
++    return aSources;
++  }
++
++private:
++  nsMediaEngineDefaultVideoSource* vSources;
++  nsMediaEngineDefaultAudioSource* aSources;
++};
++
++}
++
++#endif /* NSMEDIAENGINEDEFAULT_H_ */
+\ No newline at end of file
