@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent baf25d48d75eab1aec9c2f4f4d1935cbd4654e00
+# Parent ff154c883abafc8ff619d32aa9e2faa474a5bdb6
 # User Anant Narayanan <anant@kix.in>
 Abstract media engine interface
 
@@ -28,7 +28,7 @@ diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,189 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -79,15 +79,19 @@ new file mode 100644
 +  /* This call reserves but does not start the device. Use the nsDOMMediaHelper
 +   * class and return an instance. It will automatically call Start() when
 +   * needed to make a real MediaStream object. */
-+  virtual nsDOMMediaStream* Allocate() = 0;
++  virtual nsDOMMediaStreamHelper* Allocate() = 0;
++
 +  /* Release the device back to the system. */
 +  virtual nsresult Deallocate() = 0;
 +
-+  /* Start the device and return a MediaStream to which live data will be
-+   * written by your engine. */
-+  virtual SourceMediaStream* Start() = 0;
++  /* Start the device and add the track to the provided SourceMediaStream, with
++   * the provided TrackID. You may start appending data to the track
++   * immediately after. */
++  virtual nsresult Start(SourceMediaStream*, TrackID) = 0;
++  
 +  /* Stop the device and release the corresponding MediaStream */
 +  virtual nsresult Stop() = 0;
++  
 +  /* It is an error to call Start() before an Allocate(), and Stop() before
 +   * a Start(). Only Allocate() may be called after a Deallocate(). */
 +};
@@ -130,7 +134,7 @@ new file mode 100644
 + * Helper class, represents an nsIDOMMediaStream object that corresponds to
 + * input from a device that has been Allocate()d but not Start()ed. When the
 + * MediaStream is actually used by content, we will call Start() on the
-+ * correspoding device and start pushing frames.
++ * corresponding device and start pushing frames.
 + */
 +class nsDOMMediaStreamHelper : public nsIDOMMediaStream
 +{
@@ -152,18 +156,22 @@ new file mode 100644
 +
 +  NS_DECL_NSIDOMMEDIASTREAM
 +
-+  /* Override the methods. Instantia a real nsDOMMediaStream when called */
++  /* Override the methods. Instantiate a real nsDOMMediaStream when called */
++  NS_IMETHODIMP GetCurrentTime(double *aCurrentTime) {
++    EnsureRealStream();
++    return mDOMStream.GetCurrentTime(aCurrentTime);
++  }
 +  MediaStream* GetStream() { 
 +    EnsureRealStream();
-+    return mDOMStream.mStream;
++    return mDOMStream.GetStream();
 +  }
 +  bool IsFinished() {
 +    EnsureRealStream();
-+    return !mDOMStream.mStream || mDOMStream.mStream->IsFinished();
++    return mDOMStream.IsFinished();
 +  }
 +  nsIPrincipal* GetPrincipal() {
 +    EnsureRealStream();
-+    return mDOMStream.mPrincipal;
++    return mDOMStream.GetPrincipal();
 +  }
 +  bool CombineWithPrincipal(nsIPrincipal* aPrincipal) {
 +    EnsureRealStream();
@@ -175,31 +183,35 @@ new file mode 100644
 +  nsCOMPtr<MediaEngineVideoSource> mVideo;
 +  nsCOMPtr<MediaEngineAudioSource> mAudio;
 +
-+  void EnsureRealStream() {
++  /**
++   * Currently, we support only a single audio and video track in each stream.
++   */
++  enum {
++    kVideoTrack,
++    kAudioTrack
++  };
++
++  nsresult EnsureRealStream() {
 +    if (mDOMStream) {
 +      return;
 +    }
 +
-+    int i;
 +    mDOMStream = nsDOMMediaStream::CreateInputStream();
-+    SourceMediaStream *realStream = mDOMStream.mStream;
++    StreamMediaSource *mStream = mDOMStream->GetStream()->AsSourceStream();
 +
-+    /* Combine two SourceMediaStreams into a single one, if needed */
++    nsresult rv;
++    
 +    if (mVideo) {
-+      SourceMediaStream *smVideo = mVideo->Start();
-+      for (i = 0; i < smVideo->mUpdateTracks->Length(); i++) {
-+        realStream->mUpdateTracks->AppendElement(smVideo->mUpdateTracks[i]);
-+      }
-+      delete smVideo->mWrapper;
++      rv = mVideo->Start(mStream, (TrackID)kVideoTrack);
++      NS_ENSURE_SUCCESS(rv, rv);
 +    }
-+      
++
 +    if (mAudio) {
-+      SourceMediaStream *smAudio = mAudio->Start();
-+      for (i = 0; i < smAudio->mUpdateTracks->Length(); i++) {
-+        realStream->mUpdateTracks->AppendElement(smAudio->mUpdateTracks[i]);
-+      }
-+      delete smAudio->mWrapper;
++      rv = mAudio->Start(mStream, (TrackID)kAudioTrack);
++      NS_ENSURE_SUCCESS(rv, rv);
 +    }
++
++    return NS_OK;
 +  }
 +};
 +

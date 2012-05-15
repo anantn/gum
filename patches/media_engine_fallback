@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 6c6a164df085a9f474ef5f0e3fd9fe666e8be43c
+# Parent ad1ce2cf58070b7a52289921759dca5edb5d402e
 # User Anant Narayanan <anant@kix.in>
 Implement fallback media engine
 
@@ -335,7 +335,7 @@ new file mode 100644
 +  nsresult GetName(nsAString&);
 +  nsDOMMediaStream* Allocate();
 +  nsresult Deallocate();
-+  SourceMediaStream* Start();
++  nsresult Start(SourceMediaStream*, TrackID);
 +  nsresult GetOptions(mediaEngineVideoOptions*);
 +  nsresult Stop();
 +
@@ -365,7 +365,7 @@ new file mode 100644
 +  nsresult GetName(nsAString&);
 +  nsDOMMediaStream* Allocate();
 +  nsresult Deallocate();
-+  SourceMediaStream* Start();
++  nsresult Start(SourceMediaStream*, TrackID);
 +  nsresult Stop();
 +
 +  NS_DECL_ISUPPORTS
