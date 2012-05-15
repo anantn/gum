@@ -1,42 +1,43 @@
 # HG changeset patch
-# Parent ff154c883abafc8ff619d32aa9e2faa474a5bdb6
+# Parent baf25d48d75eab1aec9c2f4f4d1935cbd4654e00
 # User Anant Narayanan <anant@kix.in>
 Abstract media engine interface
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -58,16 +58,17 @@ EXPORTS = \
+@@ -48,16 +48,17 @@ XPIDL_MODULE = content_media
+ 
+ XPIDLSRCS = \
+   nsIDOMMediaStream.idl \
+   $(NULL)
+ 
+ EXPORTS = \
+   AudioSegment.h \
+   FileBlockCache.h \
++  MediaEngine.h \
+   MediaResource.h \
+   MediaSegment.h \
    MediaStreamGraph.h \
    nsAudioAvailableEventManager.h \
    nsBuiltinDecoder.h \
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
    nsDOMMediaStream.h \
-   nsMediaCache.h \
-   nsMediaDecoder.h \
-+  nsMediaEngine.h \
-   SharedBuffer.h \
-   StreamBuffer.h \
-   TimeVarying.h \
-   VideoFrameContainer.h \
-   VideoUtils.h \
-   VideoSegment.h \
-   $(NULL)
- 
-diff --git a/content/media/nsMediaEngine.h b/content/media/nsMediaEngine.h
+diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
-+++ b/content/media/nsMediaEngine.h
-@@ -0,0 +1,110 @@
++++ b/content/media/MediaEngine.h
+@@ -0,0 +1,177 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
-+#ifndef NSMEDIAENGINE_H_
-+#define NSMEDIAENGINE_H_
++#ifndef MEDIAENGINE_H_
++#define MEDIAENGINE_H_
 +
-+#include "nsMediaEngine.h"
++#include "MediaEngine.h"
++#include "nsDOMMediaStream.h"
 +#include "MediaStreamGraph.h"
 +
 +namespace mozilla {
@@ -48,36 +49,37 @@ new file mode 100644
 + * correspond to equivalent webrtc (GIPS) calls, and on B2G they will map to
 + * a Gonk interface.
 + */
-+class nsMediaEngineVideoSource;
-+class nsMediaEngineAudioSource;
++class MediaEngineVideoSource;
++class MediaEngineAudioSource;
 +
-+class nsMediaEngine
++class MediaEngine
 +{
 +public:
-+  virtual ~nsMediaEngine() {};
++  virtual ~MediaEngine() {};
 +  
 +  /* Return an array of video sources. Also include devices that are
 +   * currently unavailable. */
-+  virtual nsMediaEngineVideoSource* EnumerateVideoDevices() = 0;
++  virtual MediaEngineVideoSource* EnumerateVideoDevices(PRInt32&) = 0;
 +
 +  /* Return an array of audio sources. Also include devices that are
 +   * currently unavailable. */
-+  virtual nsMediaEngineAudioSource* EnumerateAudioDevices() = 0;
++  virtual MediaEngineAudioSource* EnumerateAudioDevices(PRInt32&) = 0;
 +};
 +
 +/**
 + * Common abstract base class for audio and video sources.
 + */
-+class nsMediaEngineSource
++class MediaEngineSource
 +{
 +public:
-+  virtual ~nsMediaEngineSource() {};
++  virtual ~MediaEngineSource() {};
 +  
 +  virtual nsresult GetName(nsAString&) = 0;
-+  virtual nsresult GetUUID(nsAString&) = 0;
 +
-+  /* This call reserves but does not start the device. */
-+  virtual nsresult Allocate() = 0;
++  /* This call reserves but does not start the device. Use the nsDOMMediaHelper
++   * class and return an instance. It will automatically call Start() when
++   * needed to make a real MediaStream object. */
++  virtual nsDOMMediaStream* Allocate() = 0;
 +  /* Release the device back to the system. */
 +  virtual nsresult Deallocate() = 0;
 +
@@ -93,17 +95,6 @@ new file mode 100644
 +/**
 + * Video source and friends.
 + */
-+enum mediaEngineVideoType {
-+  kVideoI420,
-+  kVideoYV12,
-+  kVideoYUY2,
-+  kVideoUYVY,
-+  kVideoIYUV,
-+  kVideoARGB,
-+  kVideoRGB24,
-+  kVideoUnknown
-+};
-+
 +enum mediaEngineVideoCodecType {
 +  kVideoCodecH263,
 +  kVideoCodecVP8,
@@ -115,14 +106,13 @@ new file mode 100644
 +  unsigned int width;
 +  unsigned int height;
 +  unsigned int maxFPS;
-+  mediaEngineVideoType type;
 +  mediaEngineVideoCodecType codecType;
 +} mediaEngineVideoOptions;
 +
-+class nsMediaEngineVideoSource : public nsMediaEngineSource
++class MediaEngineVideoSource : public MediaEngineSource
 +{
 +public:
-+  virtual ~nsMediaEngineVideoSource() {};
++  virtual ~MediaEngineVideoSource() {};
 +  /* Fills the given struct with appropriate values for all fields. */
 +  virtual nsresult GetOptions(mediaEngineVideoOptions*) = 0;
 +};
@@ -130,13 +120,90 @@ new file mode 100644
 +/**
 + * Audio source and friends.
 + */
-+class nsMediaEngineAudioSource : public nsMediaEngineSource
++class MediaEngineAudioSource : public MediaEngineSource
 +{
 +public:
-+  virtual ~nsMediaEngineAudioSource() {};
++  virtual ~MediaEngineAudioSource() {};
++};
++
++/**
++ * Helper class, represents an nsIDOMMediaStream object that corresponds to
++ * input from a device that has been Allocate()d but not Start()ed. When the
++ * MediaStream is actually used by content, we will call Start() on the
++ * correspoding device and start pushing frames.
++ */
++class nsDOMMediaStreamHelper : public nsIDOMMediaStream
++{
++public:
++  nsDOMMediaStreamHelper(MediaEngineVideoSource *aSrc) :
++    mDOMStream(nsnull), mVideo(aSrc), mAudio(nsnull) {}
++  
++  nsDOMMediaStreamHelper(MediaEngineAudioSource *aSrc) :
++    mDOMStream(nsnull), mVideo(nsnull), mAudio(aSrc) {}
++
++  nsDOMMediaStreamHelper(
++    MediaEngineVideoSource *aVideo, MediaEngineAudioSource *aAudio):
++    mDOMStream(nsnull), mVideo(aVideo), mAudio(aAudio) {}
++
++  virtual ~nsDOMMediaStreamHelper();
++
++  NS_DECL_CYCLE_COLLECTION_CLASS(nsDOMMediaStreamHelper)
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++
++  NS_DECL_NSIDOMMEDIASTREAM
++
++  /* Override the methods. Instantia a real nsDOMMediaStream when called */
++  MediaStream* GetStream() { 
++    EnsureRealStream();
++    return mDOMStream.mStream;
++  }
++  bool IsFinished() {
++    EnsureRealStream();
++    return !mDOMStream.mStream || mDOMStream.mStream->IsFinished();
++  }
++  nsIPrincipal* GetPrincipal() {
++    EnsureRealStream();
++    return mDOMStream.mPrincipal;
++  }
++  bool CombineWithPrincipal(nsIPrincipal* aPrincipal) {
++    EnsureRealStream();
++    return mDOMStream.CombineWithPrincipal(aPrincipal);
++  }
++
++protected:
++  nsCOMPtr<nsDOMMediaStream> mDOMStream;
++  nsCOMPtr<MediaEngineVideoSource> mVideo;
++  nsCOMPtr<MediaEngineAudioSource> mAudio;
++
++  void EnsureRealStream() {
++    if (mDOMStream) {
++      return;
++    }
++
++    int i;
++    mDOMStream = nsDOMMediaStream::CreateInputStream();
++    SourceMediaStream *realStream = mDOMStream.mStream;
++
++    /* Combine two SourceMediaStreams into a single one, if needed */
++    if (mVideo) {
++      SourceMediaStream *smVideo = mVideo->Start();
++      for (i = 0; i < smVideo->mUpdateTracks->Length(); i++) {
++        realStream->mUpdateTracks->AppendElement(smVideo->mUpdateTracks[i]);
++      }
++      delete smVideo->mWrapper;
++    }
++      
++    if (mAudio) {
++      SourceMediaStream *smAudio = mAudio->Start();
++      for (i = 0; i < smAudio->mUpdateTracks->Length(); i++) {
++        realStream->mUpdateTracks->AppendElement(smAudio->mUpdateTracks[i]);
++      }
++      delete smAudio->mWrapper;
++    }
++  }
 +};
 +
 +}
 +
-+#endif /* NSMEDIAENGINE_H_ */
++#endif /* MEDIAENGINE_H_ */
 \ No newline at end of file

@@ -1,0 +1,255 @@
+# HG changeset patch
+# Parent 514e0eea1c1b8b08b6806b5d767d306b42a2d9a4
+
+diff --git a/dom/Makefile.in b/dom/Makefile.in
+--- a/dom/Makefile.in
++++ b/dom/Makefile.in
+@@ -79,16 +79,17 @@ DIRS += \
+   bindings \
+   battery \
+   contacts \
+   power \
+   settings \
+   sms \
+   src \
+   locales \
++  media \
+   network \
+   plugins/base \
+   plugins/ipc \
+   indexedDB \
+   system \
+   ipc \
+   workers \
+   $(NULL)
+diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
+new file mode 100644
+--- /dev/null
++++ b/dom/media/Makefile.in
+@@ -0,0 +1,16 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this file,
++# You can obtain one at http://mozilla.org/MPL/2.0/.
++
++DEPTH            = ../..
++topsrcdir        = @top_srcdir@
++srcdir           = @srcdir@
++VPATH            = @srcdir@
++
++relativesrcdir   = dom/media
++
++include $(DEPTH)/config/autoconf.mk
++
++PARALLEL_DIRS = interfaces src
++
++include $(topsrcdir)/config/rules.mk
+diff --git a/dom/media/interfaces/Makefile.in b/dom/media/interfaces/Makefile.in
+new file mode 100644
+--- /dev/null
++++ b/dom/media/interfaces/Makefile.in
+@@ -0,0 +1,20 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this file,
++# You can obtain one at http://mozilla.org/MPL/2.0/.
++
++DEPTH            = ../../..
++topsrcdir        = @top_srcdir@
++srcdir           = @srcdir@
++VPATH            = @srcdir@
++
++include $(DEPTH)/config/autoconf.mk
++
++XPIDL_MODULE = dom_media
++
++include $(topsrcdir)/dom/dom-config.mk
++
++XPIDLSRCS = \
++  nsIDOMNavigatorUserMedia.idl \
++  $(NULL)
++
++include $(topsrcdir)/config/rules.mk
+diff --git a/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
+new file mode 100644
+--- /dev/null
++++ b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
+@@ -0,0 +1,38 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsISupports.idl"
++
++[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
++interface nsIDOMGetUserMediaSuccessCallback : nsISupports
++{
++  /* value will be a nsIDOMBlob is picture is true,
++   * and a nsIDOMMediaStream if either audio or video are true.
++   */
++  void onSuccess(in jsval value);
++};
++
++[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
++interface nsIDOMGetUserMediaErrorCallback : nsISupports
++{
++  void onError(in DOMString error);
++};
++
++[scriptable, uuid(8a26205e-e8f7-4372-bd15-97ff982b4c1c)]
++interface nsIMediaStreamOptions : nsISupports
++{
++  readonly attribute boolean audio;
++  readonly attribute boolean video;
++  readonly attribute boolean picture;
++};
++
++[scriptable, uuid(381e0071-0be5-4f6b-ae21-8e3407a37faa)]
++interface nsIDOMNavigatorUserMedia : nsISupports
++{
++  void mozGetUserMedia(
++    in nsIMediaStreamOptions params,
++    nsIDOMGetUserMediaSuccessCallback onsuccess,
++    nsIDOMGetUserMediaErrorCallback onerror
++  );
++};
+\ No newline at end of file
+diff --git a/dom/media/src/Makefile.in b/dom/media/src/Makefile.in
+new file mode 100644
+--- /dev/null
++++ b/dom/media/src/Makefile.in
+@@ -0,0 +1,26 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this file,
++# You can obtain one at http://mozilla.org/MPL/2.0/.
++
++DEPTH		= ../../..
++topsrcdir	= @top_srcdir@
++srcdir		= @srcdir@
++VPATH		= @srcdir@
++
++include $(DEPTH)/config/autoconf.mk
++
++MODULE         = dom
++LIBRARY_NAME   = dom_media_s
++LIBXUL_LIBRARY = 1
++FORCE_STATIC_LIB = 1
++
++CPPSRCS = \
++    nsUserMedia.cpp \
++    $(NULL)
++
++LOCAL_INCLUDES = \
++  -I$(topsrcdir)/content/media \
++  -I$(topsrcdir)/dom/base \
++  $(NULL)
++
++include $(topsrcdir)/config/rules.mk
+\ No newline at end of file
+diff --git a/dom/media/src/nsUserMedia.cpp b/dom/media/src/nsUserMedia.cpp
+new file mode 100644
+--- /dev/null
++++ b/dom/media/src/nsUserMedia.cpp
+@@ -0,0 +1,104 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "Navigator.h"
++#include "MediaStreamGraph.h"
++
++#include "nsMediaEngineDefault.h"
++#include "nsIDOMMediaStream.h"
++
++namespace mozilla {
++namespace dom {
++
++class ErrorCallbackRunnable : public nsRunnable {
++public:
++  ErrorCallbackRunnable(
++    nsIDOMGetUserMediaErrorCallback *aError, const nsString& aErrorMsg) :
++    mError(aError), mErrorMsg(aErrorMsg) {}
++  NS_IMETHOD Run() {
++    mError->OnError(mErrorMsg);
++    return NS_OK;
++  }
++private:
++  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  const nsString mErrorMsg;
++};
++
++class SuccessCallbackRunnable : public nsRunnable {
++public:
++  SuccessCallbackRunnable(
++    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *aStream) :
++    mSuccess(aSuccess), mStream(aStream) {}
++  NS_IMETHOD Run() {
++    mSuccess->OnSuccess(mStream);
++    return NS_OK;
++  }
++private:
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
++  nsCOMPtr<nsIDOMMediaStream> mStream;
++};
++
++
++NS_IMETHODIMP
++Navigator::MozGetUserMedia(nsIMediaStreamOptions *aParams,
++  nsIDOMGetUserMediaSuccessCallback* onSuccess,
++  nsIDOMGetUserMediaErrorCallback* onError)
++{
++  NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
++  
++  bool picture;
++  nsresult rv = aParams->GetPicture(&picture);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  if (picture) {
++    NS_DispatchToMainThread(new ErrorCallbackRunnable(
++      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
++    ));
++    return NS_OK;
++  }
++
++  bool audio, video;
++  rv = aParams->GetAudio(&audio);
++  NS_ENSURE_SUCCESS(rv, rv);
++  rv = aParams->GetVideo(&video);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  /* Fallback implementation, replace with platform-specific engines
++   * when available.
++   */
++  if (audio && video) {
++    NS_DispatchToMainThread(new ErrorCallbackRunnable(
++      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
++    ));
++    return NS_OK;
++  }
++
++  nsMediaEngineDefault engine;
++
++  if (audio) {
++    // Pick the first device
++    nsMediaEngineAudioSource *source = engine.EnumerateAudioDevices();
++    source = source[0];
++
++    // Normally we would now get the name & UUID for the device and ask the
++    // user permission. We will do that when we have a permission UI.
++    rv = source->Allocate();
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    SourceMediaStream *stream = source->Start();
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(
++      onSuccess, stream->
++    ));
++    return NS_OK;
++  }
++
++  if (video) {
++    return NS_OK;
++  }
++
++  return NS_OK;
++}
++
++}
++}
