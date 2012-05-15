@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 43fd9fe46c296037bda4d25c16e3673cba26a942
+# Parent e2eaf748db31f54bc31ee51946f0e4a8dcdc418b
 # User Anant Narayanan <anant@kix.in>
 Implement fallback media engine
 
@@ -46,7 +46,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngineDefault.cpp
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,232 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -64,6 +64,7 @@ new file mode 100644
 +
 +namespace mozilla {
 +
++NS_IMPL_ISUPPORTS1(MediaEngineDefaultVideoSource, nsITimerCallback)
 +/**
 + * Default video source.
 + */
@@ -108,7 +109,7 @@ new file mode 100644
 +}
 +
 +nsresult
-+MediaEngineDefaultVideoSource::Start(SourceMediaStream* aStream, TrackID aID)
++MediaEngineDefaultVideoSource::Start(SourceMediaStream* aStream, TrackID& aID)
 +{
 +  if (mState != kAllocated) {
 +    return NULL;
@@ -120,7 +121,9 @@ new file mode 100644
 +  }
 +
 +  mSource = aStream;
-+  VideoSegment *segment = new VideoSegment();
++
++  // AddTrack will take ownership of segment
++  VideoSegment* segment = new VideoSegment();
 +  mSource->AddTrack(aID, RATE, 0, segment);
 +
 +  /* Allocate a single blank Image */
@@ -181,13 +184,14 @@ new file mode 100644
 +{
 +  ReentrantMonitorAutoEnter enter(mMonitor);
 +
-+  VideoSegment *segment = new VideoSegment();
-+  segment->AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
-+  mSource->AppendToTrack(TRACK_VIDEO, segment);
++  VideoSegment segment;
++  segment.AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
++  mSource->AppendToTrack(TRACK_VIDEO, &segment);
 +
 +  return NS_OK;
 +}
 +
++NS_IMPL_ISUPPORTS1(MediaEngineDefaultAudioSource, nsITimerCallback)
 +/**
 + * Default audio source.
 + */
@@ -219,7 +223,7 @@ new file mode 100644
 +}
 +
 +nsresult
-+MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
++MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID& aID)
 +{
 +  if (mState != kAllocated) {
 +    return NULL;
@@ -231,7 +235,9 @@ new file mode 100644
 +  }
 +
 +  mSource = aStream;
-+  AudioSegment *segment = new AudioSegment();
++
++  // AddTrack will take ownership of segment
++  AudioSegment* segment = new AudioSegment();
 +  segment->Init(CHANNELS);
 +  mSource->AddTrack(aID, RATE, 0, segment);
 +
@@ -263,11 +269,11 @@ new file mode 100644
 +{
 +  ReentrantMonitorAutoEnter enter(mMonitor);
 +
-+  AudioSegment *segment = new AudioSegment();
-+  segment->Init(CHANNELS);
-+  segment->InsertNullDataAtStart(1); // One tick?
++  AudioSegment segment;
++  segment.Init(CHANNELS);
++  segment.InsertNullDataAtStart(1); // One tick?
 +
-+  mSource->AppendToTrack(TRACK_AUDIO, segment);
++  mSource->AppendToTrack(TRACK_AUDIO, &segment);
 +
 +  return NS_OK;
 +}
@@ -326,7 +332,7 @@ new file mode 100644
 +  nsresult GetName(nsAString&);
 +  nsDOMMediaStreamHelper* Allocate();
 +  nsresult Deallocate();
-+  nsresult Start(SourceMediaStream*, TrackID);
++  nsresult Start(SourceMediaStream*, TrackID&);
 +  nsresult GetOptions(mediaEngineVideoOptions*);
 +  nsresult Stop();
 +
@@ -355,7 +361,7 @@ new file mode 100644
 +  nsresult GetName(nsAString&);
 +  nsDOMMediaStreamHelper* Allocate();
 +  nsresult Deallocate();
-+  nsresult Start(SourceMediaStream*, TrackID);
++  nsresult Start(SourceMediaStream*, TrackID&);
 +  nsresult Stop();
 +
 +  NS_DECL_ISUPPORTS

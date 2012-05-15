@@ -46,7 +46,7 @@ diff --git a/content/media/MediaEngine.cpp b/content/media/MediaEngine.cpp
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.cpp
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,82 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -54,6 +54,8 @@ new file mode 100644
 +#include "MediaEngine.h"
 +
 +namespace mozilla {
++
++NS_IMPL_ISUPPORTS1(nsDOMMediaStreamHelper, nsIDOMMediaStream)
 +
 +/* Override nsDOMMediaStream. Instantiate a real nsDOMMediaStream when called */
 +MediaStream*
@@ -112,12 +114,14 @@ new file mode 100644
 +  nsresult rv;
 +    
 +  if (mVideo) {
-+    rv = mVideo->Start(mStream, (TrackID)kVideoTrack);
++    TrackID vId = kVideoTrack;
++    rv = mVideo->Start(mStream, vId);
 +    NS_ENSURE_SUCCESS(rv, rv);
 +  }
 +
 +  if (mAudio) {
-+    rv = mAudio->Start(mStream, (TrackID)kAudioTrack);
++    TrackID aId = kAudioTrack;
++    rv = mAudio->Start(mStream, aId);
 +    NS_ENSURE_SUCCESS(rv, rv);
 +  }
 +
@@ -129,7 +133,7 @@ diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,142 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -188,7 +192,7 @@ new file mode 100644
 +  /* Start the device and add the track to the provided SourceMediaStream, with
 +   * the provided TrackID. You may start appending data to the track
 +   * immediately after. */
-+  virtual nsresult Start(SourceMediaStream*, TrackID) = 0;
++  virtual nsresult Start(SourceMediaStream*, TrackID&) = 0;
 +  
 +  /* Stop the device and release the corresponding MediaStream */
 +  virtual nsresult Stop() = 0;
@@ -250,11 +254,9 @@ new file mode 100644
 +    MediaEngineVideoSource *aVideo, MediaEngineAudioSource *aAudio):
 +    mDOMStream(nsnull), mVideo(aVideo), mAudio(aAudio) {}
 +
-+  virtual ~nsDOMMediaStreamHelper();
++  ~nsDOMMediaStreamHelper(){};
 +
-+  NS_DECL_CYCLE_COLLECTION_CLASS(nsDOMMediaStreamHelper)
-+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-+
++  NS_DECL_ISUPPORTS
 +  NS_DECL_NSIDOMMEDIASTREAM
 +
 +  /* Methods from nsDOMMediaStream */
