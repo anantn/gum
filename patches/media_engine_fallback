@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent ad1ce2cf58070b7a52289921759dca5edb5d402e
+# Parent 43fd9fe46c296037bda4d25c16e3673cba26a942
 # User Anant Narayanan <anant@kix.in>
 Implement fallback media engine
 
@@ -24,8 +24,7 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
    nsDOMMediaStream.h \
-@@ -70,16 +71,17 @@ EXPORTS = \
-   VideoFrameContainer.h \
+@@ -71,16 +72,17 @@ EXPORTS = \
    VideoUtils.h \
    VideoSegment.h \
    $(NULL)
@@ -33,6 +32,7 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
  CPPSRCS = \
    AudioSegment.cpp \
    FileBlockCache.cpp \
+   MediaEngine.cpp \
 +  MediaEngineDefault.cpp \
    MediaResource.cpp \
    MediaStreamGraph.cpp \
@@ -46,7 +46,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngineDefault.cpp
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,226 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -74,7 +74,7 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
-+nsDOMMediaStream*
++nsDOMMediaStreamHelper*
 +MediaEngineDefaultVideoSource::Allocate()
 +{
 +  if (mState != kReleased) {
@@ -83,7 +83,7 @@ new file mode 100644
 +
 +  mState = kAllocated;
 +  return NULL;
-+  //return new nsDOMMediaStreamHelper(this);
++  return new nsDOMMediaStreamHelper(this);
 +}
 +
 +nsresult
@@ -107,8 +107,8 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
-+SourceMediaStream*
-+MediaEngineDefaultVideoSource::Start()
++nsresult
++MediaEngineDefaultVideoSource::Start(SourceMediaStream* aStream, TrackID aID)
 +{
 +  if (mState != kAllocated) {
 +    return NULL;
@@ -119,14 +119,9 @@ new file mode 100644
 +    return NULL;
 +  }
 +
-+  mStream = nsDOMMediaStream::CreateInputStream();
-+  if (!mStream) {
-+    return NULL;
-+  }
-+  mSource = mStream->GetStream()->AsSourceStream();
-+
++  mSource = aStream;
 +  VideoSegment *segment = new VideoSegment();
-+  mSource->AddTrack(TRACK_VIDEO, RATE, 0, segment);
++  mSource->AddTrack(aID, RATE, 0, segment);
 +
 +  /* Allocate a single blank Image */
 +  {
@@ -161,7 +156,8 @@ new file mode 100644
 +
 +  mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
 +  mState = kStarted;
-+  return mSource;
++  
++  return NS_OK;
 +}
 +
 +nsresult
@@ -202,15 +198,14 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
-+nsDOMMediaStream*
++nsDOMMediaStreamHelper*
 +MediaEngineDefaultAudioSource::Allocate()
 +{
 +  if (mState != kReleased) {
 +    return NULL;
 +  }
 +  mState = kAllocated;
-+  //return new nsDOMMediaStreamHelper(this);
-+  return NULL;
++  return new nsDOMMediaStreamHelper(this);
 +}
 +
 +nsresult
@@ -223,8 +218,8 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
-+SourceMediaStream*
-+MediaEngineDefaultAudioSource::Start()
++nsresult
++MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
 +{
 +  if (mState != kAllocated) {
 +    return NULL;
@@ -235,20 +230,16 @@ new file mode 100644
 +    return NULL;
 +  }
 +
-+  mStream = nsDOMMediaStream::CreateInputStream();
-+  if (!mStream) {
-+    return NULL;
-+  }
-+  mSource = mStream->GetStream()->AsSourceStream();
-+
++  mSource = aStream;
 +  AudioSegment *segment = new AudioSegment();
 +  segment->Init(CHANNELS);
-+  mSource->AddTrack(TRACK_AUDIO, RATE, 0, segment);
++  mSource->AddTrack(aID, RATE, 0, segment);
 +
 +  // 1 Audio frame per Video frame.
 +  mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
 +  mState = kStarted;
-+  return mSource;
++
++  return NS_OK;
 +}
 +
 +nsresult
@@ -286,7 +277,7 @@ diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefau
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngineDefault.h
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,115 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -328,12 +319,12 @@ new file mode 100644
 +                                        
 +{
 +public:
-+  MediaEngineDefaultVideoSource() : mTimer(nsnull), mStream(nsnull),
-+                                    mState(kReleased), mMonitor("Video.Engine") {}
++  MediaEngineDefaultVideoSource() : mTimer(nsnull), mState(kReleased),
++                                    mMonitor("Video.Engine") {}
 +  virtual ~MediaEngineDefaultVideoSource();
 +
 +  nsresult GetName(nsAString&);
-+  nsDOMMediaStream* Allocate();
++  nsDOMMediaStreamHelper* Allocate();
 +  nsresult Deallocate();
 +  nsresult Start(SourceMediaStream*, TrackID);
 +  nsresult GetOptions(mediaEngineVideoOptions*);
@@ -344,7 +335,6 @@ new file mode 100644
 +
 +protected:
 +  nsCOMPtr<nsITimer> mTimer;
-+  nsCOMPtr<nsDOMMediaStream> mStream;
 +  nsRefPtr<layers::ImageContainer> mImageContainer;
 +
 +  defaultEngineState mState;
@@ -358,12 +348,12 @@ new file mode 100644
 +                                        
 +{
 +public:
-+  MediaEngineDefaultAudioSource() : mTimer(nsnull), mStream(nsnull),
-+                                    mState(kReleased), mMonitor("Audio.Engine") {}
++  MediaEngineDefaultAudioSource() : mTimer(nsnull), mState(kReleased),
++                                    mMonitor("Audio.Engine") {}
 +  virtual ~MediaEngineDefaultAudioSource();
 +
 +  nsresult GetName(nsAString&);
-+  nsDOMMediaStream* Allocate();
++  nsDOMMediaStreamHelper* Allocate();
 +  nsresult Deallocate();
 +  nsresult Start(SourceMediaStream*, TrackID);
 +  nsresult Stop();
@@ -373,7 +363,6 @@ new file mode 100644
 +
 +protected:
 +  nsCOMPtr<nsITimer> mTimer;
-+  nsCOMPtr<nsDOMMediaStream> mStream;
 +
 +  defaultEngineState mState;
 +  ReentrantMonitor mMonitor;

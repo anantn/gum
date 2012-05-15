@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 514e0eea1c1b8b08b6806b5d767d306b42a2d9a4
+# Parent b0f20ff0e3a9836ff4aba80e8e06f33a45f819be
 
 diff --git a/dom/Makefile.in b/dom/Makefile.in
 --- a/dom/Makefile.in
@@ -22,6 +22,150 @@ diff --git a/dom/Makefile.in b/dom/Makefile.in
    ipc \
    workers \
    $(NULL)
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -128,16 +128,17 @@ Navigator::~Navigator()
+   Invalidate();
+ }
+ 
+ NS_INTERFACE_MAP_BEGIN(Navigator)
+   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_B2G_RIL
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
+ #endif
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
+ #ifdef MOZ_B2G_BT
+@@ -878,16 +879,35 @@ Navigator::MozIsLocallyAvailable(const n
+     return NS_OK;
+   }
+ 
+   nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
+   return httpChannel->GetRequestSucceeded(aIsAvailable);
+ }
+ 
+ //*****************************************************************************
++//    Navigator::nsIDOMGetUserMedia
++//*****************************************************************************
++NS_IMETHODIMP
++Navigator::MozGetUserMedia(nsIMediaStreamOptions *aParams,
++  nsIDOMGetUserMediaSuccessCallback* onSuccess,
++  nsIDOMGetUserMediaErrorCallback* onError)
++{
++  if (!Preferences::GetBool("media.gUM.enabled", true)) {
++    return NS_OK;
++  }
++
++  if (!mMediaManager) {
++    mMediaManager = new nsMediaManager();
++  }
++  
++  return mMediaManager->GetUserMedia(aParams, onSuccess, onError);
++}
++
++//*****************************************************************************
+ //    Navigator::nsIDOMNavigatorGeolocation
+ //*****************************************************************************
+ 
+ NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
+ {
+   NS_ENSURE_ARG_POINTER(_retval);
+   *_retval = nsnull;
+ 
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -40,27 +40,29 @@
+  *
+  * ***** END LICENSE BLOCK ***** */
+ 
+ #ifndef mozilla_dom_Navigator_h
+ #define mozilla_dom_Navigator_h
+ 
+ #include "nsIDOMNavigator.h"
+ #include "nsIDOMNavigatorGeolocation.h"
++#include "nsIDOMNavigatorUserMedia.h"
+ #include "nsIDOMNavigatorDesktopNotification.h"
+ #include "nsIDOMClientInformation.h"
+ #include "nsIDOMNavigatorBattery.h"
+ #include "nsIDOMNavigatorSms.h"
+ #include "nsIDOMNavigatorNetwork.h"
+ #include "nsAutoPtr.h"
+ #include "nsWeakReference.h"
+ 
+ class nsPluginArray;
+ class nsMimeTypeArray;
+ class nsGeolocation;
++class nsMediaManager;
+ class nsDesktopNotificationCenter;
+ class nsPIDOMWindow;
+ class nsIDOMMozConnection;
+ 
+ #ifdef MOZ_B2G_RIL
+ #include "nsIDOMNavigatorTelephony.h"
+ class nsIDOMTelephony;
+ #endif
+@@ -95,16 +97,17 @@ class PowerManager;
+ } // namespace power
+ 
+ class Navigator : public nsIDOMNavigator
+                 , public nsIDOMClientInformation
+                 , public nsIDOMNavigatorGeolocation
+                 , public nsIDOMNavigatorDesktopNotification
+                 , public nsIDOMMozNavigatorBattery
+                 , public nsIDOMMozNavigatorSms
++                , public nsIDOMNavigatorUserMedia
+ #ifdef MOZ_B2G_RIL
+                 , public nsIDOMNavigatorTelephony
+ #endif
+                 , public nsIDOMMozNavigatorNetwork
+ #ifdef MOZ_B2G_BT
+                 , public nsIDOMNavigatorBluetooth
+ #endif
+ {
+@@ -114,16 +117,17 @@ public:
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSIDOMNAVIGATOR
+   NS_DECL_NSIDOMCLIENTINFORMATION
+   NS_DECL_NSIDOMNAVIGATORGEOLOCATION
+   NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
+   NS_DECL_NSIDOMMOZNAVIGATORBATTERY
+   NS_DECL_NSIDOMMOZNAVIGATORSMS
++  NS_DECL_NSIDOMNAVIGATORUSERMEDIA
+ #ifdef MOZ_B2G_RIL
+   NS_DECL_NSIDOMNAVIGATORTELEPHONY
+ #endif
+   NS_DECL_NSIDOMMOZNAVIGATORNETWORK
+ 
+ #ifdef MOZ_B2G_BT
+   NS_DECL_NSIDOMNAVIGATORBLUETOOTH
+ #endif
+@@ -146,16 +150,17 @@ public:
+ 
+ private:
+   bool IsSmsAllowed() const;
+   bool IsSmsSupported() const;
+ 
+   nsRefPtr<nsMimeTypeArray> mMimeTypes;
+   nsRefPtr<nsPluginArray> mPlugins;
+   nsRefPtr<nsGeolocation> mGeolocation;
++  nsRefPtr<nsMediaManager> mMediaManager;
+   nsRefPtr<nsDesktopNotificationCenter> mNotification;
+   nsRefPtr<battery::BatteryManager> mBatteryManager;
+   nsRefPtr<power::PowerManager> mPowerManager;
+   nsRefPtr<sms::SmsManager> mSmsManager;
+ #ifdef MOZ_B2G_RIL
+   nsCOMPtr<nsIDOMTelephony> mTelephony;
+ #endif
+   nsRefPtr<network::Connection> mConnection;
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -72,20 +216,21 @@ diff --git a/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl b/dom/media/inter
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,39 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
 +#include "nsISupports.idl"
++#include "nsIDOMMediaStream.idl"
 +
 +[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
 +interface nsIDOMGetUserMediaSuccessCallback : nsISupports
 +{
-+  /* value will be a nsIDOMBlob is picture is true,
++  /* value should be a nsIDOMBlob is picture is true,
 +   * and a nsIDOMMediaStream if either audio or video are true.
 +   */
-+  void onSuccess(in jsval value);
++  void onSuccess(in nsIDOMMediaStream value);
 +};
 +
 +[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
@@ -107,8 +252,8 @@ new file mode 100644
 +{
 +  void mozGetUserMedia(
 +    in nsIMediaStreamOptions params,
-+    nsIDOMGetUserMediaSuccessCallback onsuccess,
-+    nsIDOMGetUserMediaErrorCallback onerror
++    in nsIDOMGetUserMediaSuccessCallback onsuccess,
++    in nsIDOMGetUserMediaErrorCallback onerror
 +  );
 +};
 \ No newline at end of file
@@ -148,18 +293,19 @@ diff --git a/dom/media/src/nsUserMedia.cpp b/dom/media/src/nsUserMedia.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/nsUserMedia.cpp
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,138 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
 +#include "Navigator.h"
 +#include "MediaStreamGraph.h"
++#include "MediaEngineDefault.h"
 +
-+#include "nsMediaEngineDefault.h"
 +#include "nsIDOMMediaStream.h"
 +
 +namespace mozilla {
++class MediaEngine;
 +namespace dom {
 +
 +class ErrorCallbackRunnable : public nsRunnable {
@@ -190,9 +336,32 @@ new file mode 100644
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
 +};
 +
++class MediaManager {
++public:
++  MediaManager() : mBackend(nsnull) {}
++  virtual ~MediaManager();
 +
-+NS_IMETHODIMP
-+Navigator::MozGetUserMedia(nsIMediaStreamOptions *aParams,
++protected:
++  MediaEngine* mBackend;
++  MediaEngine* GetBackend();
++  nsresult GetUserMedia(nsIMediaStreamOptions *aParams,
++    nsIDOMGetUserMediaSuccessCallback* onSuccess,
++    nsIDOMGetUserMediaErrorCallback* onError
++  );
++};
++
++MediaEngine*
++MediaManager::GetBackend()
++{
++  // Pick the right backend according to the platform. For now we use default.
++  if (!mBackend) {
++    mBackend = new mozilla::MediaEngineDefault();
++  }
++  return mBackend;
++}
++
++nsresult
++MediaManager::GetUserMedia(nsIMediaStreamOptions *aParams,
 +  nsIDOMGetUserMediaSuccessCallback* onSuccess,
 +  nsIDOMGetUserMediaErrorCallback* onError)
 +{
@@ -215,37 +384,47 @@ new file mode 100644
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
-+  /* Fallback implementation, replace with platform-specific engines
-+   * when available.
-+   */
-+  if (audio && video) {
-+    NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
-+    ));
-+    return NS_OK;
-+  }
++  MediaEngine* aBackend = GetBackend();
 +
-+  nsMediaEngineDefault engine;
++  PRInt32 len;
++  nsDOMMediaStreamHelper *vHelper = nsnull;
++  nsDOMMediaStreamHelper *aHelper = nsnull;
++  MediaEngineVideoSource *vSource = nsnull;
++  MediaEngineAudioSource *aSource = nsnull;
 +
-+  if (audio) {
-+    // Pick the first device
-+    nsMediaEngineAudioSource *source = engine.EnumerateAudioDevices();
-+    source = source[0];
++  if (video) {
++    // Pick the last device
++    MediaEngineVideoSource *sources = aBackend->EnumerateVideoDevices(len);
++    vSource = &sources[len-1];
 +
 +    // Normally we would now get the name & UUID for the device and ask the
 +    // user permission. We will do that when we have a permission UI.
-+    rv = source->Allocate();
-+    NS_ENSURE_SUCCESS(rv, rv);
++    vHelper = vSource->Allocate();
++  }
 +
-+    SourceMediaStream *stream = source->Start();
++  if (audio) {
++    // Same for audio
++    MediaEngineAudioSource *sources = aBackend->EnumerateAudioDevices(len);
++    aSource = &sources[len-1];
++    aHelper = aSource->Allocate();
++  }
++
++  // If we were asked for both audio & video, combine into a single stream
++  if (vHelper && aHelper) {
++    delete vHelper;
++    delete aHelper;
 +    NS_DispatchToMainThread(new SuccessCallbackRunnable(
-+      onSuccess, stream->
++      onSuccess, new nsDOMMediaStreamHelper(vSource, aSource)
 +    ));
 +    return NS_OK;
 +  }
 +
-+  if (video) {
++  if (vHelper) {
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, vHelper));
 +    return NS_OK;
++  }
++  if (aHelper) {
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, aHelper));
 +  }
 +
 +  return NS_OK;

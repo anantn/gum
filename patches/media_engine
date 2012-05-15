@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent ff154c883abafc8ff619d32aa9e2faa474a5bdb6
+# Parent baf25d48d75eab1aec9c2f4f4d1935cbd4654e00
 # User Anant Narayanan <anant@kix.in>
 Abstract media engine interface
 
@@ -24,11 +24,112 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
    nsDOMMediaStream.h \
+@@ -69,16 +70,17 @@ EXPORTS = \
+   VideoFrameContainer.h \
+   VideoUtils.h \
+   VideoSegment.h \
+   $(NULL)
+ 
+ CPPSRCS = \
+   AudioSegment.cpp \
+   FileBlockCache.cpp \
++  MediaEngine.cpp \
+   MediaResource.cpp \
+   MediaStreamGraph.cpp \
+   nsAudioAvailableEventManager.cpp \
+   nsBuiltinDecoder.cpp \
+   nsBuiltinDecoderStateMachine.cpp \
+   nsBuiltinDecoderReader.cpp \
+   nsDOMMediaStream.cpp \
+   nsMediaCache.cpp \
+diff --git a/content/media/MediaEngine.cpp b/content/media/MediaEngine.cpp
+new file mode 100644
+--- /dev/null
++++ b/content/media/MediaEngine.cpp
+@@ -0,0 +1,78 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "MediaEngine.h"
++
++namespace mozilla {
++
++/* Override nsDOMMediaStream. Instantiate a real nsDOMMediaStream when called */
++MediaStream*
++nsDOMMediaStreamHelper::GetStream()
++{ 
++  EnsureRealStream();
++  return mDOMStream->GetStream();
++}
++
++bool
++nsDOMMediaStreamHelper::IsFinished()
++{
++  EnsureRealStream();
++  return mDOMStream->IsFinished();
++}
++
++nsIPrincipal*
++nsDOMMediaStreamHelper::GetPrincipal()
++{
++  EnsureRealStream();
++  return mDOMStream->GetPrincipal();
++}
++
++bool
++nsDOMMediaStreamHelper::CombineWithPrincipal(nsIPrincipal* aPrincipal)
++{
++  EnsureRealStream();
++  return mDOMStream->CombineWithPrincipal(aPrincipal);
++}
++
++NS_IMETHODIMP
++nsDOMMediaStreamHelper::GetCurrentTime(double *aCurrentTime)
++{
++  EnsureRealStream();
++  return mDOMStream->GetCurrentTime(aCurrentTime);
++}
++
++/**
++ * Currently, we support only a single audio and video track in each stream.
++ */
++enum {
++  kVideoTrack,
++  kAudioTrack
++};
++
++nsresult
++nsDOMMediaStreamHelper::EnsureRealStream()
++{
++  if (mDOMStream) {
++    return NS_OK;
++  }
++
++  mDOMStream = nsDOMMediaStream::CreateInputStream();
++  SourceMediaStream *mStream = mDOMStream->GetStream()->AsSourceStream();
++
++  nsresult rv;
++    
++  if (mVideo) {
++    rv = mVideo->Start(mStream, (TrackID)kVideoTrack);
++    NS_ENSURE_SUCCESS(rv, rv);
++  }
++
++  if (mAudio) {
++    rv = mAudio->Start(mStream, (TrackID)kAudioTrack);
++    NS_ENSURE_SUCCESS(rv, rv);
++  }
++
++  return NS_OK;
++}
++
++}
 diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,144 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,7 +137,6 @@ new file mode 100644
 +#ifndef MEDIAENGINE_H_
 +#define MEDIAENGINE_H_
 +
-+#include "MediaEngine.h"
 +#include "nsDOMMediaStream.h"
 +#include "MediaStreamGraph.h"
 +
@@ -49,6 +149,7 @@ new file mode 100644
 + * correspond to equivalent webrtc (GIPS) calls, and on B2G they will map to
 + * a Gonk interface.
 + */
++class nsDOMMediaStreamHelper;
 +class MediaEngineVideoSource;
 +class MediaEngineAudioSource;
 +
@@ -156,63 +257,18 @@ new file mode 100644
 +
 +  NS_DECL_NSIDOMMEDIASTREAM
 +
-+  /* Override the methods. Instantiate a real nsDOMMediaStream when called */
-+  NS_IMETHODIMP GetCurrentTime(double *aCurrentTime) {
-+    EnsureRealStream();
-+    return mDOMStream.GetCurrentTime(aCurrentTime);
-+  }
-+  MediaStream* GetStream() { 
-+    EnsureRealStream();
-+    return mDOMStream.GetStream();
-+  }
-+  bool IsFinished() {
-+    EnsureRealStream();
-+    return mDOMStream.IsFinished();
-+  }
-+  nsIPrincipal* GetPrincipal() {
-+    EnsureRealStream();
-+    return mDOMStream.GetPrincipal();
-+  }
-+  bool CombineWithPrincipal(nsIPrincipal* aPrincipal) {
-+    EnsureRealStream();
-+    return mDOMStream.CombineWithPrincipal(aPrincipal);
-+  }
++  /* Methods from nsDOMMediaStream */
++  bool IsFinished();
++  MediaStream* GetStream();
++  nsIPrincipal* GetPrincipal();
++  bool CombineWithPrincipal(nsIPrincipal* aPrincipal);
 +
 +protected:
 +  nsCOMPtr<nsDOMMediaStream> mDOMStream;
-+  nsCOMPtr<MediaEngineVideoSource> mVideo;
-+  nsCOMPtr<MediaEngineAudioSource> mAudio;
++  MediaEngineVideoSource* mVideo;
++  MediaEngineAudioSource* mAudio;
 +
-+  /**
-+   * Currently, we support only a single audio and video track in each stream.
-+   */
-+  enum {
-+    kVideoTrack,
-+    kAudioTrack
-+  };
-+
-+  nsresult EnsureRealStream() {
-+    if (mDOMStream) {
-+      return;
-+    }
-+
-+    mDOMStream = nsDOMMediaStream::CreateInputStream();
-+    StreamMediaSource *mStream = mDOMStream->GetStream()->AsSourceStream();
-+
-+    nsresult rv;
-+    
-+    if (mVideo) {
-+      rv = mVideo->Start(mStream, (TrackID)kVideoTrack);
-+      NS_ENSURE_SUCCESS(rv, rv);
-+    }
-+
-+    if (mAudio) {
-+      rv = mAudio->Start(mStream, (TrackID)kAudioTrack);
-+      NS_ENSURE_SUCCESS(rv, rv);
-+    }
-+
-+    return NS_OK;
-+  }
++  nsresult EnsureRealStream();
 +};
 +
 +}
