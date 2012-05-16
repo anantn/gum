@@ -1,6 +1,31 @@
 # HG changeset patch
 # Parent 3eba47db62eb89b47778bb42921953be11fc925c
 
+diff --git a/content/media/Makefile.in b/content/media/Makefile.in
+--- a/content/media/Makefile.in
++++ b/content/media/Makefile.in
+@@ -39,21 +39,16 @@ topsrcdir = @top_srcdir@
+ srcdir    = @srcdir@
+ VPATH     = @srcdir@
+ 
+ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE = content
+ LIBRARY_NAME = gkconmedia_s
+ LIBXUL_LIBRARY = 1
+-XPIDL_MODULE = content_media
+-
+-XPIDLSRCS = \
+-  nsIDOMMediaStream.idl \
+-  $(NULL)
+ 
+ EXPORTS = \
+   AudioSegment.h \
+   FileBlockCache.h \
+   MediaEngine.h \
+   MediaEngineDefault.h \
+   MediaResource.h \
+   MediaSegment.h \
 diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefault.h
 --- a/content/media/MediaEngineDefault.h
 +++ b/content/media/MediaEngineDefault.h
@@ -161,7 +186,7 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #include "nsAutoPtr.h"
  #include "nsWeakReference.h"
  
-@@ -80,46 +81,52 @@ namespace dom {
+@@ -80,27 +81,32 @@ namespace dom {
  namespace battery {
  class BatteryManager;
  } // namespace battery
@@ -185,18 +210,16 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  
  class Navigator : public nsIDOMNavigator
                  , public nsIDOMClientInformation
++                , public nsIDOMNavigatorUserMedia
                  , public nsIDOMNavigatorGeolocation
                  , public nsIDOMNavigatorDesktopNotification
                  , public nsIDOMMozNavigatorBattery
                  , public nsIDOMMozNavigatorSms
-+                , public nsIDOMNavigatorUserMedia
  #ifdef MOZ_B2G_RIL
                  , public nsIDOMNavigatorTelephony
  #endif
                  , public nsIDOMMozNavigatorNetwork
- #ifdef MOZ_B2G_BT
-                 , public nsIDOMNavigatorBluetooth
- #endif
+@@ -110,16 +116,17 @@ class Navigator : public nsIDOMNavigator
  {
  public:
    Navigator(nsPIDOMWindow *aInnerWindow);
@@ -298,7 +321,7 @@ diff --git a/dom/media/interfaces/Makefile.in b/dom/media/interfaces/Makefile.in
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/interfaces/Makefile.in
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +# You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -315,10 +338,14 @@ new file mode 100644
 +include $(topsrcdir)/dom/dom-config.mk
 +
 +XPIDLSRCS = \
++  nsIDOMMediaStream.idl \
 +  nsIDOMNavigatorUserMedia.idl \
 +  $(NULL)
 +
 +include $(topsrcdir)/config/rules.mk
+diff --git a/content/media/nsIDOMMediaStream.idl b/dom/media/interfaces/nsIDOMMediaStream.idl
+rename from content/media/nsIDOMMediaStream.idl
+rename to dom/media/interfaces/nsIDOMMediaStream.idl
 diff --git a/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
 new file mode 100644
 --- /dev/null
@@ -368,7 +395,7 @@ diff --git a/dom/media/src/Makefile.in b/dom/media/src/Makefile.in
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/Makefile.in
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,32 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +# You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -376,17 +403,20 @@ new file mode 100644
 +DEPTH            = ../../..
 +topsrcdir        = @top_srcdir@
 +srcdir           = @srcdir@
-+VPATH            = \
-+  $(srcdir) \
-+  $(NULL)
++VPATH            = @srcdir@
 +
 +include $(DEPTH)/config/autoconf.mk
 +
++MODULE           = dom
 +LIBRARY_NAME     = dom_media_s
 +LIBXUL_LIBRARY   = 1
 +FORCE_STATIC_LIB = 1
 +
 +include $(topsrcdir)/dom/dom-config.mk
++
++EXPORTS = \
++  MediaManager.h \
++  $(NULL)
 +
 +CPPSRCS = \
 +  MediaManager.cpp \
@@ -565,3 +595,24 @@ new file mode 100644
 +}
 +}
 \ No newline at end of file
+diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
+--- a/layout/build/Makefile.in
++++ b/layout/build/Makefile.in
+@@ -91,16 +91,17 @@ SHARED_LIBRARY_LIBS = \
+ 	$(DEPTH)/content/xbl/src/$(LIB_PREFIX)gkconxbl_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/content/xul/document/src/$(LIB_PREFIX)gkconxuldoc_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/view/src/$(LIB_PREFIX)gkview_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/base/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/battery/$(LIB_PREFIX)dom_battery_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/contacts/$(LIB_PREFIX)jsdomcontacts_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/power/$(LIB_PREFIX)dom_power_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/settings/$(LIB_PREFIX)jsdomsettings_s.$(LIB_SUFFIX) \
++	$(DEPTH)/dom/media/src/$(LIB_PREFIX)dom_media_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/network/src/$(LIB_PREFIX)dom_network_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/sms/src/$(LIB_PREFIX)dom_sms_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/events/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/json/$(LIB_PREFIX)json_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/jsurl/$(LIB_PREFIX)jsurl_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/storage/$(LIB_PREFIX)jsdomstorage_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/offline/$(LIB_PREFIX)jsdomoffline_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/geolocation/$(LIB_PREFIX)jsdomgeolocation_s.$(LIB_SUFFIX) \
