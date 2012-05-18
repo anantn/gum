@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 3eba47db62eb89b47778bb42921953be11fc925c
+# Parent 1f2494166f9943d96e23bb99e65bcee8ba04acbc
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
@@ -26,47 +26,88 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    MediaEngineDefault.h \
    MediaResource.h \
    MediaSegment.h \
-diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefault.h
---- a/content/media/MediaEngineDefault.h
-+++ b/content/media/MediaEngineDefault.h
-@@ -36,17 +36,17 @@ enum defaultEngineState {
+diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
+--- a/content/media/MediaEngineDefault.cpp
++++ b/content/media/MediaEngineDefault.cpp
+@@ -1,14 +1,14 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
- class MediaEngineDefaultVideoSource : public nsITimerCallback,
-                                       public MediaEngineVideoSource
-                                         
+ #include "MediaEngineDefault.h"
+-
++#include <stdio.h>
+ #define WIDTH 320
+ #define HEIGHT 240
+ #define FPS 10
+ #define CHANNELS 1
+ 
+ #define TRACK_VIDEO 1
+ #define TRACK_AUDIO 2
+ #define RATE USECS_PER_S
+@@ -75,20 +75,22 @@ MediaEngineDefaultVideoSource::Start(Sou
+   mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+   if (!mTimer) {
+     return NULL;
+   }
+ 
+   mSource = aStream;
+ 
+   // Allocate a single blank Image
+-  layers::Image::Format format = Image::PLANAR_YCBCR;
++  layers::Image::Format format = layers::Image::PLANAR_YCBCR;
+   mImageContainer = layers::LayerManager::CreateImageContainer();
+     
+-  nsRefPtr<Image> image = mImageContainer->CreateImage(&format, 1);
++  nsRefPtr<layers::Image> image = getter_AddRefs(
++    mImageContainer->CreateImage(&format, 1)
++  );
+   
+   mImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
+   PRUint8* frame = (PRUint8*) PR_Calloc((WIDTH * HEIGHT) / 2, 3);
+   const PRUint8 lumaBpp = 8;
+   const PRUint8 chromaBpp = 4; 
+ 
+   layers::PlanarYCbCrImage::Data data;
+   data.mYChannel = frame;
+@@ -106,17 +108,17 @@ MediaEngineDefaultVideoSource::Start(Sou
+   // SetData copies data, so we can free the frame
+   mImage->SetData(data);
+   PR_Free(frame);
+ 
+   // AddTrack takes ownership of segment
+   VideoSegment *segment = new VideoSegment();
+   segment->AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
+   mSource->AddTrack(aID, RATE, 0, segment);
+-
++  printf("!!!! OK WE ADDED TEH TRACK\n");
+   // Start timer for subsequent frames
+   mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
+   mState = kStarted;
+   
+   return NS_OK;
+ }
+ 
+ nsresult
+@@ -136,17 +138,17 @@ MediaEngineDefaultVideoSource::Stop()
+ }
+ 
+ NS_IMETHODIMP
+ MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
  {
- public:
-   MediaEngineDefaultVideoSource() : mTimer(nsnull), mState(kReleased),
-                                     mMonitor("Video.Engine") {}
--  virtual ~MediaEngineDefaultVideoSource();
-+  ~MediaEngineDefaultVideoSource(){};
+   VideoSegment segment;
+   segment.AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
+   mSource->AppendToTrack(TRACK_VIDEO, &segment);
+-
++  printf("!!!! OK WE APPENDED TEH SEGMENT\n");
+   return NS_OK;
+ }
  
-   nsresult GetName(nsAString&);
-   nsDOMMediaStreamHelper* Allocate();
-   nsresult Deallocate();
-   nsresult Start(SourceMediaStream*, TrackID&);
-   nsresult GetOptions(mediaEngineVideoOptions*);
-   nsresult Stop();
- 
-@@ -65,17 +65,17 @@ protected:
- 
- class MediaEngineDefaultAudioSource : public nsITimerCallback,
-                                       public MediaEngineAudioSource
-                                         
- {
- public:
-   MediaEngineDefaultAudioSource() : mTimer(nsnull), mState(kReleased),
-                                     mMonitor("Audio.Engine") {}
--  virtual ~MediaEngineDefaultAudioSource();
-+  ~MediaEngineDefaultAudioSource(){};
- 
-   nsresult GetName(nsAString&);
-   nsDOMMediaStreamHelper* Allocate();
-   nsresult Deallocate();
-   nsresult Start(SourceMediaStream*, TrackID&);
-   nsresult Stop();
- 
-   NS_DECL_ISUPPORTS
+ NS_IMPL_ISUPPORTS1(MediaEngineDefaultAudioSource, nsITimerCallback)
+ /**
+  * Default audio source.
+  */
+ void
 diff --git a/dom/Makefile.in b/dom/Makefile.in
 --- a/dom/Makefile.in
 +++ b/dom/Makefile.in
@@ -432,7 +473,7 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,150 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -506,49 +547,75 @@ new file mode 100644
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
-+  mozilla::MediaEngine* aBackend = GetBackend();
-+
-+  PRInt32 len;
-+  mozilla::nsDOMMediaStreamHelper *vHelper = nsnull;
-+  mozilla::nsDOMMediaStreamHelper *aHelper = nsnull;
-+  mozilla::MediaEngineVideoSource *vSource = nsnull;
-+  mozilla::MediaEngineAudioSource *aSource = nsnull;
-+
-+  if (video) {
-+    // Pick the last device
-+    mozilla::MediaEngineVideoSource *sources =
-+      aBackend->EnumerateVideoDevices(len);
-+    vSource = &sources[len-1];
-+
-+    // Normally we would now get the name & UUID for the device and ask the
-+    // user permission. We will do that when we have a permission UI.
-+    vHelper = vSource->Allocate();
-+  }
-+
-+  if (audio) {
-+    // Same for audio
-+    mozilla::MediaEngineAudioSource *sources =
-+      aBackend->EnumerateAudioDevices(len);
-+    aSource = &sources[len-1];
-+    aHelper = aSource->Allocate();
-+  }
-+
-+  // If we were asked for both audio & video, combine into a single stream
-+  if (vHelper && aHelper) {
-+    delete vHelper;
-+    delete aHelper;
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(
-+      onSuccess, new mozilla::nsDOMMediaStreamHelper(vSource, aSource)
++  // FIXME: Implementing merging two streams
++  if (audio && video) {
++    NS_DispatchToMainThread(new ErrorCallbackRunnable(
++      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
 +    ));
 +    return NS_OK;
 +  }
 +
-+  if (vHelper) {
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, vHelper));
++  // We only support 1 audio and 1 video track for now
++  enum {
++    kVideoTrack = 1,
++    kAudioTrack = 2
++  };
++
++  mozilla::MediaEngine* aBackend = GetBackend();  
++
++  if (video) {
++    // Pick the last device in the list for now
++    aBackend->EnumerateVideoDevices(&vSources);
++
++    PRInt32 count = vSources.Length();
++    if (!count) {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        onError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
++      ));
++      return NS_OK;
++    }
++
++    mozilla::MediaEngineVideoSource* vSource = vSources[count-1];
++
++    // Normally we would now get the name & UUID for the device and ask the
++    // user permission. We will do that when we have some UI.
++    nsCOMPtr<nsDOMMediaStream> vComStream = vSource->Allocate();
++    nsDOMMediaStream* vStream = vComStream.get();
++
++    // Call Start() too because we don't have a NotifyStartConsuming callback
++    // from the MediaStream yet. FIXME: Change this when do, add failure case
++    nsRefPtr<SourceMediaStream> sStream = vStream->GetStream()->AsSourceStream();
++    rv = vSource->Start(sStream.get(), (TrackID)kVideoTrack);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, vStream));
 +    return NS_OK;
 +  }
-+  if (aHelper) {
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, aHelper));
++
++  if (audio) {
++    // Same as above for audio
++    aBackend->EnumerateAudioDevices(&aSources);
++
++    PRInt32 count = aSources.Length();
++    if (!count) {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        onError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
++      ));
++      return NS_OK;
++    }
++
++    mozilla::MediaEngineAudioSource* aSource = aSources[count-1];
++
++    nsCOMPtr<nsDOMMediaStream> aComStream = aSource->Allocate();
++    nsDOMMediaStream* aStream = aComStream.get();
++
++    // FIXME: Defer Start() call when have a callback, add failure case
++    nsRefPtr<SourceMediaStream> sStream = aStream->GetStream()->AsSourceStream();
++    rv = aSource->Start(sStream.get(), (TrackID)kAudioTrack);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, aStream));
++    return NS_OK;
 +  }
 +
 +  return NS_OK;
@@ -557,12 +624,11 @@ new file mode 100644
 +}
 +}
 +}
-\ No newline at end of file
 diff --git a/dom/media/src/MediaManager.h b/dom/media/src/MediaManager.h
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,33 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -577,8 +643,8 @@ new file mode 100644
 +
 +class MediaManager : public nsISupports {
 +public:
-+  MediaManager():mBackend(nsnull){};
-+  ~MediaManager(){};
++  MediaManager() : mBackend(nsnull) {};
++  ~MediaManager() { delete mBackend; };
 +
 +  NS_DECL_ISUPPORTS
 +
@@ -589,6 +655,8 @@ new file mode 100644
 +private:
 +  mozilla::MediaEngine* mBackend;
 +  mozilla::MediaEngine* GetBackend();
++  nsTArray<nsAutoPtr<mozilla::MediaEngineVideoSource> > vSources;
++  nsTArray<nsAutoPtr<mozilla::MediaEngineAudioSource> > aSources;
 +};
 +
 +}

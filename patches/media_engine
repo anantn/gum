@@ -24,116 +24,11 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
    nsDOMMediaStream.h \
-@@ -69,16 +70,17 @@ EXPORTS = \
-   VideoFrameContainer.h \
-   VideoUtils.h \
-   VideoSegment.h \
-   $(NULL)
- 
- CPPSRCS = \
-   AudioSegment.cpp \
-   FileBlockCache.cpp \
-+  MediaEngine.cpp \
-   MediaResource.cpp \
-   MediaStreamGraph.cpp \
-   nsAudioAvailableEventManager.cpp \
-   nsBuiltinDecoder.cpp \
-   nsBuiltinDecoderStateMachine.cpp \
-   nsBuiltinDecoderReader.cpp \
-   nsDOMMediaStream.cpp \
-   nsMediaCache.cpp \
-diff --git a/content/media/MediaEngine.cpp b/content/media/MediaEngine.cpp
-new file mode 100644
---- /dev/null
-+++ b/content/media/MediaEngine.cpp
-@@ -0,0 +1,82 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
-+
-+#include "MediaEngine.h"
-+
-+namespace mozilla {
-+
-+NS_IMPL_ISUPPORTS1(nsDOMMediaStreamHelper, nsIDOMMediaStream)
-+
-+/* Override nsDOMMediaStream. Instantiate a real nsDOMMediaStream when called */
-+MediaStream*
-+nsDOMMediaStreamHelper::GetStream()
-+{ 
-+  EnsureRealStream();
-+  return mDOMStream->GetStream();
-+}
-+
-+bool
-+nsDOMMediaStreamHelper::IsFinished()
-+{
-+  EnsureRealStream();
-+  return mDOMStream->IsFinished();
-+}
-+
-+nsIPrincipal*
-+nsDOMMediaStreamHelper::GetPrincipal()
-+{
-+  EnsureRealStream();
-+  return mDOMStream->GetPrincipal();
-+}
-+
-+bool
-+nsDOMMediaStreamHelper::CombineWithPrincipal(nsIPrincipal* aPrincipal)
-+{
-+  EnsureRealStream();
-+  return mDOMStream->CombineWithPrincipal(aPrincipal);
-+}
-+
-+NS_IMETHODIMP
-+nsDOMMediaStreamHelper::GetCurrentTime(double *aCurrentTime)
-+{
-+  EnsureRealStream();
-+  return mDOMStream->GetCurrentTime(aCurrentTime);
-+}
-+
-+/**
-+ * Currently, we support only a single audio and video track in each stream.
-+ */
-+enum {
-+  kVideoTrack,
-+  kAudioTrack
-+};
-+
-+nsresult
-+nsDOMMediaStreamHelper::EnsureRealStream()
-+{
-+  if (mDOMStream) {
-+    return NS_OK;
-+  }
-+
-+  mDOMStream = nsDOMMediaStream::CreateInputStream();
-+  SourceMediaStream *mStream = mDOMStream->GetStream()->AsSourceStream();
-+
-+  nsresult rv;
-+    
-+  if (mVideo) {
-+    TrackID vId = kVideoTrack;
-+    rv = mVideo->Start(mStream, vId);
-+    NS_ENSURE_SUCCESS(rv, rv);
-+  }
-+
-+  if (mAudio) {
-+    TrackID aId = kAudioTrack;
-+    rv = mAudio->Start(mStream, aId);
-+    NS_ENSURE_SUCCESS(rv, rv);
-+  }
-+
-+  return NS_OK;
-+}
-+
-+}
 diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,106 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -153,7 +48,6 @@ new file mode 100644
 + * correspond to equivalent webrtc (GIPS) calls, and on B2G they will map to
 + * a Gonk interface.
 + */
-+class nsDOMMediaStreamHelper;
 +class MediaEngineVideoSource;
 +class MediaEngineAudioSource;
 +
@@ -162,13 +56,13 @@ new file mode 100644
 +public:
 +  virtual ~MediaEngine() {};
 +  
-+  /* Return an array of video sources. Also include devices that are
-+   * currently unavailable. */
-+  virtual MediaEngineVideoSource* EnumerateVideoDevices(PRInt32&) = 0;
++  /* Populate an array of video sources in the nsTArray. Also include devices
++   * that are currently unavailable. */
++  virtual void EnumerateVideoDevices(nsTArray<nsAutoPtr<MediaEngineVideoSource> >*) = 0;
 +
-+  /* Return an array of audio sources. Also include devices that are
-+   * currently unavailable. */
-+  virtual MediaEngineAudioSource* EnumerateAudioDevices(PRInt32&) = 0;
++  /* Populate an array of audio sources in the nsTArray. Also include devices
++   * that are currently unavailable. */
++  virtual void EnumerateAudioDevices(nsTArray<nsAutoPtr<MediaEngineAudioSource> >*) = 0;
 +};
 +
 +/**
@@ -179,12 +73,14 @@ new file mode 100644
 +public:
 +  virtual ~MediaEngineSource() {};
 +  
-+  virtual nsresult GetName(nsAString&) = 0;
++  /* Populate the human readable name of this device in the nsAString */
++  virtual void GetName(nsAString&) = 0;
 +
-+  /* This call reserves but does not start the device. Use the nsDOMMediaHelper
-+   * class and return an instance. It will automatically call Start() when
-+   * needed to make a real MediaStream object. */
-+  virtual nsDOMMediaStreamHelper* Allocate() = 0;
++  /* Populate the UUID of this device in the nsAString */
++  virtual void GetUUID(nsAString&) = 0;
++
++  /* This call reserves but does not start the device. */
++  virtual already_AddRefed<nsDOMMediaStream> Allocate() = 0;
 +
 +  /* Release the device back to the system. */
 +  virtual nsresult Deallocate() = 0;
@@ -192,7 +88,7 @@ new file mode 100644
 +  /* Start the device and add the track to the provided SourceMediaStream, with
 +   * the provided TrackID. You may start appending data to the track
 +   * immediately after. */
-+  virtual nsresult Start(SourceMediaStream*, TrackID&) = 0;
++  virtual nsresult Start(SourceMediaStream*, TrackID) = 0;
 +  
 +  /* Stop the device and release the corresponding MediaStream */
 +  virtual nsresult Stop() = 0;
@@ -204,26 +100,27 @@ new file mode 100644
 +/**
 + * Video source and friends.
 + */
-+enum mediaEngineVideoCodecType {
++enum MediaEngineVideoCodecType {
 +  kVideoCodecH263,
 +  kVideoCodecVP8,
 +  kVideoCodecI420
 +};
 +
-+typedef struct mediaEngineVideoOptions {
-+  bool interlaced;
-+  unsigned int width;
-+  unsigned int height;
-+  unsigned int maxFPS;
-+  mediaEngineVideoCodecType codecType;
-+} mediaEngineVideoOptions;
++struct MediaEngineVideoOptions {
++  PRUint32 mWidth;
++  PRUint32 mHeight;
++  PRUint32 mMaxFPS;
++  MediaEngineVideoCodecType codecType;
++};
 +
 +class MediaEngineVideoSource : public MediaEngineSource
 +{
 +public:
 +  virtual ~MediaEngineVideoSource() {};
-+  /* Fills the given struct with appropriate values for all fields. */
-+  virtual nsresult GetOptions(mediaEngineVideoOptions*) = 0;
++  
++  /* Return a MediaEngineVideoOptions struct with appropriate values for all
++   * fields. */
++  virtual MediaEngineVideoOptions GetOptions() = 0;
 +};
 +
 +/**
@@ -233,44 +130,6 @@ new file mode 100644
 +{
 +public:
 +  virtual ~MediaEngineAudioSource() {};
-+};
-+
-+/**
-+ * Helper class, represents an nsIDOMMediaStream object that corresponds to
-+ * input from a device that has been Allocate()d but not Start()ed. When the
-+ * MediaStream is actually used by content, we will call Start() on the
-+ * corresponding device and start pushing frames.
-+ */
-+class nsDOMMediaStreamHelper : public nsIDOMMediaStream
-+{
-+public:
-+  nsDOMMediaStreamHelper(MediaEngineVideoSource *aSrc) :
-+    mDOMStream(nsnull), mVideo(aSrc), mAudio(nsnull) {}
-+  
-+  nsDOMMediaStreamHelper(MediaEngineAudioSource *aSrc) :
-+    mDOMStream(nsnull), mVideo(nsnull), mAudio(aSrc) {}
-+
-+  nsDOMMediaStreamHelper(
-+    MediaEngineVideoSource *aVideo, MediaEngineAudioSource *aAudio):
-+    mDOMStream(nsnull), mVideo(aVideo), mAudio(aAudio) {}
-+
-+  ~nsDOMMediaStreamHelper(){};
-+
-+  NS_DECL_ISUPPORTS
-+  NS_DECL_NSIDOMMEDIASTREAM
-+
-+  /* Methods from nsDOMMediaStream */
-+  bool IsFinished();
-+  MediaStream* GetStream();
-+  nsIPrincipal* GetPrincipal();
-+  bool CombineWithPrincipal(nsIPrincipal* aPrincipal);
-+
-+protected:
-+  nsCOMPtr<nsDOMMediaStream> mDOMStream;
-+  MediaEngineVideoSource* mVideo;
-+  MediaEngineAudioSource* mAudio;
-+
-+  nsresult EnsureRealStream();
 +};
 +
 +}
