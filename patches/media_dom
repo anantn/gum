@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 1f2494166f9943d96e23bb99e65bcee8ba04acbc
+# Parent 2eff60a1007959f7bb6765231941059c92117739
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
@@ -45,7 +45,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  #define TRACK_VIDEO 1
  #define TRACK_AUDIO 2
  #define RATE USECS_PER_S
-@@ -75,20 +75,22 @@ MediaEngineDefaultVideoSource::Start(Sou
+@@ -75,20 +75,20 @@ MediaEngineDefaultVideoSource::Start(Sou
    mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
    if (!mTimer) {
      return NULL;
@@ -59,9 +59,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
    mImageContainer = layers::LayerManager::CreateImageContainer();
      
 -  nsRefPtr<Image> image = mImageContainer->CreateImage(&format, 1);
-+  nsRefPtr<layers::Image> image = getter_AddRefs(
-+    mImageContainer->CreateImage(&format, 1)
-+  );
++  nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&format, 1);
    
    mImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
    PRUint8* frame = (PRUint8*) PR_Calloc((WIDTH * HEIGHT) / 2, 3);
@@ -70,14 +68,17 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  
    layers::PlanarYCbCrImage::Data data;
    data.mYChannel = frame;
-@@ -106,17 +108,17 @@ MediaEngineDefaultVideoSource::Start(Sou
+@@ -104,19 +104,19 @@ MediaEngineDefaultVideoSource::Start(Sou
+   data.mStereoMode = layers::STEREO_MODE_MONO;
+ 
    // SetData copies data, so we can free the frame
    mImage->SetData(data);
    PR_Free(frame);
  
    // AddTrack takes ownership of segment
    VideoSegment *segment = new VideoSegment();
-   segment->AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
+-  segment->AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
++  segment->AppendFrame(image.forget(), USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
    mSource->AddTrack(aID, RATE, 0, segment);
 -
 +  printf("!!!! OK WE ADDED TEH TRACK\n");
@@ -89,14 +90,19 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  }
  
  nsresult
-@@ -136,17 +138,17 @@ MediaEngineDefaultVideoSource::Stop()
+@@ -134,19 +134,21 @@ MediaEngineDefaultVideoSource::Stop()
+   mState = kStopped;
+   return NS_OK;
  }
  
  NS_IMETHODIMP
  MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
  {
    VideoSegment segment;
-   segment.AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
+-  segment.AppendFrame(mImage, USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
++
++  nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
++  segment.AppendFrame(image.forget(), USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
    mSource->AppendToTrack(TRACK_VIDEO, &segment);
 -
 +  printf("!!!! OK WE APPENDED TEH SEGMENT\n");
@@ -108,6 +114,28 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
   * Default audio source.
   */
  void
+diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefault.h
+--- a/content/media/MediaEngineDefault.h
++++ b/content/media/MediaEngineDefault.h
+@@ -56,17 +56,17 @@ public:
+   NS_DECL_NSITIMERCALLBACK
+ 
+ protected:
+   nsCOMPtr<nsITimer> mTimer;
+   nsRefPtr<layers::ImageContainer> mImageContainer;
+ 
+   DefaultEngineState mState;
+   SourceMediaStream* mSource;
+-  layers::PlanarYCbCrImage* mImage;
++  nsRefPtr<layers::PlanarYCbCrImage> mImage;
+ };
+ 
+ class MediaEngineDefaultAudioSource : public nsITimerCallback,
+                                       public MediaEngineAudioSource
+                                         
+ {
+ public:
+   MediaEngineDefaultAudioSource() : mTimer(nsnull), mState(kReleased) {}
 diff --git a/dom/Makefile.in b/dom/Makefile.in
 --- a/dom/Makefile.in
 +++ b/dom/Makefile.in
