@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 2eff60a1007959f7bb6765231941059c92117739
+# Parent 9dcf774d7d6a4d75a33e475500d633178398f0bb
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
@@ -466,7 +466,7 @@ new file mode 100644
 +  NS_ENSURE_SUCCESS(rv, rv);
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
-+
++  
 +  // FIXME: Implementing merging two streams
 +  if (audio && video) {
 +    NS_DispatchToMainThread(new ErrorCallbackRunnable(
@@ -575,8 +575,8 @@ new file mode 100644
 +private:
 +  mozilla::MediaEngine* mBackend;
 +  mozilla::MediaEngine* GetBackend();
-+  nsTArray<nsAutoPtr<mozilla::MediaEngineVideoSource> > vSources;
-+  nsTArray<nsAutoPtr<mozilla::MediaEngineAudioSource> > aSources;
++  nsTArray<nsRefPtr<mozilla::MediaEngineVideoSource> > vSources;
++  nsTArray<nsRefPtr<mozilla::MediaEngineAudioSource> > aSources;
 +};
 +
 +}

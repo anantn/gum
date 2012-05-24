@@ -58,17 +58,17 @@ new file mode 100644
 +  
 +  /* Populate an array of video sources in the nsTArray. Also include devices
 +   * that are currently unavailable. */
-+  virtual void EnumerateVideoDevices(nsTArray<nsAutoPtr<MediaEngineVideoSource> >*) = 0;
++  virtual void EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >*) = 0;
 +
 +  /* Populate an array of audio sources in the nsTArray. Also include devices
 +   * that are currently unavailable. */
-+  virtual void EnumerateAudioDevices(nsTArray<nsAutoPtr<MediaEngineAudioSource> >*) = 0;
++  virtual void EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >*) = 0;
 +};
 +
 +/**
 + * Common abstract base class for audio and video sources.
 + */
-+class MediaEngineSource
++class MediaEngineSource : public nsISupports
 +{
 +public:
 +  virtual ~MediaEngineSource() {};
