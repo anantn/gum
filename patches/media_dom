@@ -311,7 +311,7 @@ diff --git a/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl b/dom/media/inter
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,40 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -340,6 +340,7 @@ new file mode 100644
 +  readonly attribute boolean audio;
 +  readonly attribute boolean video;
 +  readonly attribute boolean picture;
++  readonly attribute DOMString camera;
 +};
 +
 +[scriptable, uuid(381e0071-0be5-4f6b-ae21-8e3407a37faa)]
@@ -393,7 +394,7 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,205 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -409,10 +410,12 @@ new file mode 100644
 +  ErrorCallbackRunnable(
 +    nsIDOMGetUserMediaErrorCallback *aError, const nsString& aErrorMsg) :
 +    mError(aError), mErrorMsg(aErrorMsg) {}
++
 +  NS_IMETHOD Run() {
 +    mError->OnError(mErrorMsg);
 +    return NS_OK;
 +  }
++
 +private:
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 +  const nsString mErrorMsg;
@@ -421,16 +424,134 @@ new file mode 100644
 +class SuccessCallbackRunnable : public nsRunnable {
 +public:
 +  SuccessCallbackRunnable(
-+    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *aStream) :
-+    mSuccess(aSuccess), mStream(aStream) {}
++    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *audioStream) :
++    mSuccess(aSuccess), mStream(audioStream) {}
++
 +  NS_IMETHOD Run() {
 +    mSuccess->OnSuccess(mStream);
 +    return NS_OK;
 +  }
++
 +private:
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
 +};
++
++class GetUserMediaRunnable : public nsRunnable {
++public:
++  GetUserMediaRunnable(bool audio, bool video, bool picture,
++    const nsString& camera, MediaManager* manager,
++    nsIDOMGetUserMediaSuccessCallback* onSuccess,
++    nsIDOMGetUserMediaErrorCallback* onError) {
++
++    mAudio = audio;
++    mVideo = video;
++    mPicture = picture;
++    mCamera = camera;    
++
++    mManager = manager;
++    mSuccess = onSuccess;
++    mError = onError;
++  }
++
++  NS_IMETHOD Run() {
++    nsresult rv;
++
++    if (mPicture) {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
++      ));
++      return NS_OK;
++    }
++
++    // FIXME: Implementing merging two streams (See bug 758391).
++    if (mAudio && mVideo) {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
++      ));
++      return NS_OK;
++    }
++
++    // We only support 1 audio and 1 video track for now
++    enum {
++      kVideoTrack = 1,
++      kAudioTrack = 2
++    };
++
++    nsTArray<nsRefPtr<mozilla::MediaEngineVideoSource> > videoSources;
++    nsTArray<nsRefPtr<mozilla::MediaEngineAudioSource> > audioSources;
++    mozilla::MediaEngine* mBackend = mManager->GetBackend();  
++
++    if (mVideo) {
++      // Pick the last device in the list for now
++      mBackend->EnumerateVideoDevices(&videoSources);
++
++      PRInt32 count = videoSources.Length();
++      if (!count) {
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(
++          mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
++        ));
++        return NS_OK;
++      }
++
++      mozilla::MediaEngineVideoSource* videoSource = videoSources[count - 1];
++
++      // Normally we would now get the name & UUID for the device and ask the
++      // user permission. We will do that when we have some UI.
++      nsCOMPtr<nsDOMMediaStream> videoComStream = videoSource->Allocate();
++      nsDOMMediaStream* videoStream = videoComStream.get();
++
++      // Call Start() too because we don't have a NotifyStartConsuming callback
++      // from the MediaStream yet. FIXME: Change this when do, add failure case
++      nsRefPtr<SourceMediaStream> sStream = videoStream->GetStream()->AsSourceStream();
++      rv = videoSource->Start(sStream.get(), (TrackID)kVideoTrack);
++      NS_ENSURE_SUCCESS(rv, rv);
++
++      NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, videoStream));
++      return NS_OK;
++    }
++
++    if (mAudio) {
++      // Same as above for audio
++      mBackend->EnumerateAudioDevices(&audioSources);
++
++      PRInt32 count = audioSources.Length();
++      if (!count) {
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(
++          mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
++        ));
++        return NS_OK;
++      }
++
++      mozilla::MediaEngineAudioSource* audioSource = audioSources[count - 1];
++
++      nsCOMPtr<nsDOMMediaStream> audioComStream = audioSource->Allocate();
++      nsDOMMediaStream* audioStream = audioComStream.get();
++
++      // FIXME: Defer Start() call when have a callback, add failure case
++      nsRefPtr<SourceMediaStream> sStream = audioStream->GetStream()->AsSourceStream();
++      rv = audioSource->Start(sStream.get(), (TrackID)kAudioTrack);
++      NS_ENSURE_SUCCESS(rv, rv);
++
++      NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, audioStream));
++      return NS_OK;
++    }
++
++    return NS_OK;
++  }
++
++private:
++  bool mAudio;
++  bool mVideo;
++  bool mPicture;
++  const nsString mCamera;
++
++  nsRefPtr<MediaManager> mManager;
++
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
++  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++};
++
 +
 +NS_IMPL_ISUPPORTS0(MediaManager)
 +
@@ -450,93 +571,28 @@ new file mode 100644
 +{
 +  NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
 +  
-+  bool picture;
++  bool audio, video, picture;
 +  nsresult rv = aParams->GetPicture(&picture);
 +  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  if (picture) {
-+    NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
-+    ));
-+    return NS_OK;
-+  }
-+
-+  bool audio, video;
 +  rv = aParams->GetAudio(&audio);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsString cameraType;
++  rv = aParams->GetCamera(cameraType);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // We only support "front" or "back"
 +  
-+  // FIXME: Implementing merging two streams
-+  if (audio && video) {
-+    NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+      onError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
-+    ));
-+    return NS_OK;
-+  }
++  nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(
++    audio, video, picture, cameraType, this, onSuccess, onError
++  );
++  NS_ENSURE_TRUE(gUMRunnable, NS_ERROR_OUT_OF_MEMORY);
 +
-+  // We only support 1 audio and 1 video track for now
-+  enum {
-+    kVideoTrack = 1,
-+    kAudioTrack = 2
-+  };
-+
-+  mozilla::MediaEngine* aBackend = GetBackend();  
-+
-+  if (video) {
-+    // Pick the last device in the list for now
-+    aBackend->EnumerateVideoDevices(&vSources);
-+
-+    PRInt32 count = vSources.Length();
-+    if (!count) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+        onError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
-+      ));
-+      return NS_OK;
-+    }
-+
-+    mozilla::MediaEngineVideoSource* vSource = vSources[count-1];
-+
-+    // Normally we would now get the name & UUID for the device and ask the
-+    // user permission. We will do that when we have some UI.
-+    nsCOMPtr<nsDOMMediaStream> vComStream = vSource->Allocate();
-+    nsDOMMediaStream* vStream = vComStream.get();
-+
-+    // Call Start() too because we don't have a NotifyStartConsuming callback
-+    // from the MediaStream yet. FIXME: Change this when do, add failure case
-+    nsRefPtr<SourceMediaStream> sStream = vStream->GetStream()->AsSourceStream();
-+    rv = vSource->Start(sStream.get(), (TrackID)kVideoTrack);
-+    NS_ENSURE_SUCCESS(rv, rv);
-+
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, vStream));
-+    return NS_OK;
-+  }
-+
-+  if (audio) {
-+    // Same as above for audio
-+    aBackend->EnumerateAudioDevices(&aSources);
-+
-+    PRInt32 count = aSources.Length();
-+    if (!count) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+        onError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
-+      ));
-+      return NS_OK;
-+    }
-+
-+    mozilla::MediaEngineAudioSource* aSource = aSources[count-1];
-+
-+    nsCOMPtr<nsDOMMediaStream> aComStream = aSource->Allocate();
-+    nsDOMMediaStream* aStream = aComStream.get();
-+
-+    // FIXME: Defer Start() call when have a callback, add failure case
-+    nsRefPtr<SourceMediaStream> sStream = aStream->GetStream()->AsSourceStream();
-+    rv = aSource->Start(sStream.get(), (TrackID)kAudioTrack);
-+    NS_ENSURE_SUCCESS(rv, rv);
-+
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(onSuccess, aStream));
-+    return NS_OK;
-+  }
++  nsCOMPtr<nsIThread> gUMThread;
++  rv = NS_NewThread(getter_AddRefs(gUMThread), gUMRunnable);
++  NS_ENSURE_SUCCESS(rv, rv);
 +
 +  return NS_OK;
 +}
@@ -548,7 +604,7 @@ diff --git a/dom/media/src/MediaManager.h b/dom/media/src/MediaManager.h
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,31 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -568,15 +624,13 @@ new file mode 100644
 +
 +  NS_DECL_ISUPPORTS
 +
++  mozilla::MediaEngine* GetBackend();
 +  nsresult GetUserMedia(nsIMediaStreamOptions *aParams,
 +    nsIDOMGetUserMediaSuccessCallback* onSuccess,
 +    nsIDOMGetUserMediaErrorCallback* onError);
 +
 +private:
 +  mozilla::MediaEngine* mBackend;
-+  mozilla::MediaEngine* GetBackend();
-+  nsTArray<nsRefPtr<mozilla::MediaEngineVideoSource> > vSources;
-+  nsTArray<nsRefPtr<mozilla::MediaEngineAudioSource> > aSources;
 +};
 +
 +}
