@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 9dcf774d7d6a4d75a33e475500d633178398f0bb
+# Parent f285bfb89ee70fe4a5a84aef8acb8697351df864
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
@@ -394,7 +394,7 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,202 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -440,14 +440,13 @@ new file mode 100644
 +class GetUserMediaRunnable : public nsRunnable {
 +public:
 +  GetUserMediaRunnable(bool audio, bool video, bool picture,
-+    const nsString& camera, MediaManager* manager,
++    MediaManager* manager,
 +    nsIDOMGetUserMediaSuccessCallback* onSuccess,
 +    nsIDOMGetUserMediaErrorCallback* onError) {
 +
 +    mAudio = audio;
 +    mVideo = video;
-+    mPicture = picture;
-+    mCamera = camera;    
++    mPicture = picture; 
 +
 +    mManager = manager;
 +    mSuccess = onSuccess;
@@ -544,7 +543,6 @@ new file mode 100644
 +  bool mAudio;
 +  bool mVideo;
 +  bool mPicture;
-+  const nsString mCamera;
 +
 +  nsRefPtr<MediaManager> mManager;
 +
@@ -579,14 +577,13 @@ new file mode 100644
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
++  // We only support "front" or "back". TBD: Send to GetUserMediaRunnable.
 +  nsString cameraType;
 +  rv = aParams->GetCamera(cameraType);
 +  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  // We only support "front" or "back"
 +  
 +  nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(
-+    audio, video, picture, cameraType, this, onSuccess, onError
++    audio, video, picture, this, onSuccess, onError
 +  );
 +  NS_ENSURE_TRUE(gUMRunnable, NS_ERROR_OUT_OF_MEMORY);
 +
