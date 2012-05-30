@@ -280,7 +280,7 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,215 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -323,6 +323,38 @@ new file mode 100644
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
 +};
 +
++/**
++ * This runnable creates a nsDOMMediaStream from a given MediaEngineSource
++ * and returns it via a success callback. Both must be done on the main thread.
++ */
++class GetUserMediaCallbackRunable : public nsRunnable {
++public:
++  GetUserMediaCallbackRunable(
++    MediaEngineSource *aSource, TrackID aId, nsIDOMGetUserMediaSuccessCallback *aCallback) :
++    mSource(aSource), mId(aId), mCallback(aCallback) {}
++
++  NS_IMETHOD Run() {
++    // Normally we would now get the name & UUID for the device and ask the
++    // user permission. We will do that when we have some UI.
++    nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
++    nsDOMMediaStream* stream = comStream.get();
++
++    // Call Start() too because we don't have a NotifyStartConsuming callback
++    // from the MediaStream yet. FIXME: Change this when do, add failure case
++    nsRefPtr<SourceMediaStream> sStream = stream->GetStream()->AsSourceStream();
++    nsresult rv = mSource->Start(sStream.get(), mId);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(mCallback, stream));
++    return NS_OK;
++  }
++
++private:
++  nsCOMPtr<MediaEngineSource> mSource;
++  TrackID mId;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mCallback;
++};
++
 +class GetUserMediaRunnable : public nsRunnable {
 +public:
 +  GetUserMediaRunnable(bool audio, bool video, bool picture,
@@ -340,8 +372,6 @@ new file mode 100644
 +  }
 +
 +  NS_IMETHOD Run() {
-+    nsresult rv;
-+
 +    if (mPicture) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
@@ -380,19 +410,9 @@ new file mode 100644
 +      }
 +
 +      mozilla::MediaEngineVideoSource* videoSource = videoSources[count - 1];
-+
-+      // Normally we would now get the name & UUID for the device and ask the
-+      // user permission. We will do that when we have some UI.
-+      nsCOMPtr<nsDOMMediaStream> videoComStream = videoSource->Allocate();
-+      nsDOMMediaStream* videoStream = videoComStream.get();
-+
-+      // Call Start() too because we don't have a NotifyStartConsuming callback
-+      // from the MediaStream yet. FIXME: Change this when do, add failure case
-+      nsRefPtr<SourceMediaStream> sStream = videoStream->GetStream()->AsSourceStream();
-+      rv = videoSource->Start(sStream.get(), (TrackID)kVideoTrack);
-+      NS_ENSURE_SUCCESS(rv, rv);
-+
-+      NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, videoStream));
++      NS_DispatchToMainThread(
++        new GetUserMediaCallbackRunable(videoSource, kVideoTrack, mSuccess)
++      );
 +      return NS_OK;
 +    }
 +
@@ -409,16 +429,9 @@ new file mode 100644
 +      }
 +
 +      mozilla::MediaEngineAudioSource* audioSource = audioSources[count - 1];
-+
-+      nsCOMPtr<nsDOMMediaStream> audioComStream = audioSource->Allocate();
-+      nsDOMMediaStream* audioStream = audioComStream.get();
-+
-+      // FIXME: Defer Start() call when have a callback, add failure case
-+      nsRefPtr<SourceMediaStream> sStream = audioStream->GetStream()->AsSourceStream();
-+      rv = audioSource->Start(sStream.get(), (TrackID)kAudioTrack);
-+      NS_ENSURE_SUCCESS(rv, rv);
-+
-+      NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, audioStream));
++      NS_DispatchToMainThread(
++        new GetUserMediaCallbackRunable(audioSource, kAudioTrack, mSuccess)
++      );
 +      return NS_OK;
 +    }
 +
