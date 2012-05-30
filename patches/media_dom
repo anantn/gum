@@ -1,8 +1,30 @@
 # HG changeset patch
-# Parent 7351685c0da062100238f5cbbccf5eabe25ee619
+# Parent b7fd3ad1f8b49d2dae3c32427f8bdf5de7107e14
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
+diff --git a/b2g/installer/package-manifest.in b/b2g/installer/package-manifest.in
+--- a/b2g/installer/package-manifest.in
++++ b/b2g/installer/package-manifest.in
+@@ -167,6 +167,7 @@
+ @BINPATH@/components/dom_devicestorage.xpt
+ @BINPATH@/components/dom_events.xpt
+ @BINPATH@/components/dom_geolocation.xpt
++@BINPATH@/components/dom_media.xpt
+ @BINPATH@/components/dom_network.xpt
+ @BINPATH@/components/dom_notification.xpt
+ @BINPATH@/components/dom_html.xpt
+diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
+--- a/browser/installer/package-manifest.in
++++ b/browser/installer/package-manifest.in
+@@ -172,6 +172,7 @@
+ @BINPATH@/components/dom_devicestorage.xpt
+ @BINPATH@/components/dom_events.xpt
+ @BINPATH@/components/dom_geolocation.xpt
++@BINPATH@/components/dom_media.xpt
+ @BINPATH@/components/dom_network.xpt
+ @BINPATH@/components/dom_notification.xpt
+ @BINPATH@/components/dom_html.xpt
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
