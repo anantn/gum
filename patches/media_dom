@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 3d64a9932d2536032f03aa612208c50c7712919e
+# Parent 33c204ed6f3aa9c95824d645621b628b198c783f
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
@@ -130,7 +130,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  #endif
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
  #ifdef MOZ_B2G_BT
-@@ -895,16 +897,37 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+@@ -895,16 +897,42 @@ NS_IMETHODIMP Navigator::GetGeolocation(
      return NS_ERROR_FAILURE;
    }
  
@@ -143,9 +143,9 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +//*****************************************************************************
 +
 +NS_IMETHODIMP
-+Navigator::MozGetUserMedia(nsIMediaStreamOptions *aParams,
-+    nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+    nsIDOMGetUserMediaErrorCallback* onError)
++Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
++                           nsIDOMGetUserMediaSuccessCallback* onSuccess,
++                           nsIDOMGetUserMediaErrorCallback* onError)
 +{
 +  if (!Preferences::GetBool("media.enabled", true)) {
 +    return NS_OK;
@@ -156,7 +156,12 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +    mMediaManager = new media::MediaManager();
 +  }
 +
-+  return mMediaManager->GetUserMedia(aParams, onSuccess, onError);
++  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++
++  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
++    return NS_ERROR_FAILURE;
++  }
++  return mMediaManager->GetUserMedia(win->GetOuterWindow(), aParams, onSuccess, onError);
 +}
 +
 +//*****************************************************************************
@@ -353,7 +358,7 @@ diff --git a/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl b/dom/media/inter
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/interfaces/nsIDOMNavigatorUserMedia.idl
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,39 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -364,10 +369,11 @@ new file mode 100644
 +[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
 +interface nsIDOMGetUserMediaSuccessCallback : nsISupports
 +{
-+  /* value should be a nsIDOMBlob is picture is true,
-+   * and a nsIDOMMediaStream if either audio or video are true.
++  /* 
++   * value must be a nsIDOMBlob if picture is true and a
++   * nsIDOMMediaStream if either audio or video are true.
 +   */
-+  void onSuccess(in nsIDOMMediaStream value);
++  void onSuccess(in jsval value);
 +};
 +
 +[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
@@ -388,13 +394,10 @@ new file mode 100644
 +[scriptable, uuid(381e0071-0be5-4f6b-ae21-8e3407a37faa)]
 +interface nsIDOMNavigatorUserMedia : nsISupports
 +{
-+  void mozGetUserMedia(
-+    in nsIMediaStreamOptions params,
-+    in nsIDOMGetUserMediaSuccessCallback onsuccess,
-+    in nsIDOMGetUserMediaErrorCallback onerror
-+  );
++  void mozGetUserMedia(in nsIMediaStreamOptions params,
++		       in nsIDOMGetUserMediaSuccessCallback onsuccess,
++		       in nsIDOMGetUserMediaErrorCallback onerror);
 +};
-\ No newline at end of file
 diff --git a/dom/media/src/Makefile.in b/dom/media/src/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -436,12 +439,15 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,271 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
 +#include "MediaManager.h"
++#include "nsJSUtils.h"
++#include "nsIScriptGlobalObject.h"
++#include "nsContentUtils.h"
 +
 +namespace mozilla {
 +namespace dom {
@@ -449,9 +455,9 @@ new file mode 100644
 +
 +class ErrorCallbackRunnable : public nsRunnable {
 +public:
-+  ErrorCallbackRunnable(
-+    nsIDOMGetUserMediaErrorCallback *aError, const nsString& aErrorMsg) :
-+    mError(aError), mErrorMsg(aErrorMsg) {}
++  ErrorCallbackRunnable(nsIDOMGetUserMediaErrorCallback *aError, const nsString& aErrorMsg)
++    : mError(aError)
++    , mErrorMsg(aErrorMsg) {}
 +
 +  NS_IMETHOD Run() {
 +    mError->OnError(mErrorMsg);
@@ -465,18 +471,18 @@ new file mode 100644
 +
 +class SuccessCallbackRunnable : public nsRunnable {
 +public:
-+  SuccessCallbackRunnable(
-+    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *audioStream) :
-+    mSuccess(aSuccess), mStream(audioStream) {}
++  SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback *aSuccess, jsval aResult)
++    : mSuccess(aSuccess),
++      mResult(aResult) {}
 +
 +  NS_IMETHOD Run() {
-+    mSuccess->OnSuccess(mStream);
++    mSuccess->OnSuccess(mResult);
 +    return NS_OK;
 +  }
 +
 +private:
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-+  nsCOMPtr<nsIDOMMediaStream> mStream;
++  jsval mResult;
 +};
 +
 +/**
@@ -486,30 +492,56 @@ new file mode 100644
 +class GetUserMediaCallbackRunable : public nsRunnable,
 +                                    public MediaStreamListener {
 +public:
-+  GetUserMediaCallbackRunable(
-+    MediaEngineSource *aSource, TrackID aId,
-+    nsIDOMGetUserMediaSuccessCallback *aSuccess,
-+    nsIDOMGetUserMediaErrorCallback *aError) :
-+    mSource(aSource), mId(aId), mSuccess(aSuccess), mError(aError) {}
++  GetUserMediaCallbackRunable(nsIDOMWindow *aWindow,
++			      MediaEngineSource *aSource,
++			      TrackID aId,
++			      nsIDOMGetUserMediaSuccessCallback *aSuccess,
++			      nsIDOMGetUserMediaErrorCallback *aError)
++    : mWindow(aWindow)
++    , mSource(aSource)
++    , mId(aId)
++    , mSuccess(aSuccess)
++    , mError(aError) {}
 +
 +  NS_IMETHOD Run() {
 +    // Normally we would now get the name & UUID for the device and ask the
 +    // user permission. We will do that when we have some UI.
 +    mComStream = mSource->Allocate();
 +    if (mComStream == nsnull) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+        mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE");
-+      ));
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")));
 +      return NS_ERROR_FAILURE;
 +    }
-+    
++
 +    // Add our listener. We'll call Start() on the source when get a bcallback
 +    // that the MediaStream has started consuming.
 +    nsDOMMediaStream* stream = mComStream.get();
 +    MediaStream* mediaStream = stream->GetStream();
 +    mediaStream->AddListener(this);
 +
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, stream));
++
++    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mWindow);
++    if (!sgo) {
++      return NS_ERROR_FAILURE;
++    }
++
++    nsIScriptContext *scriptContext = sgo->GetScriptContext();
++    if (!scriptContext) {
++      return NS_ERROR_FAILURE;
++    }
++      
++    JSContext *cx = scriptContext->GetNativeContext();
++    if (!cx) {
++      return NS_ERROR_FAILURE;
++    }
++
++    jsval wrapped;
++    nsContentUtils::WrapNative(cx,
++			       JS_GetGlobalObject(cx),
++			       stream,
++			       &NS_GET_IID(nsIDOMMediaStream),
++			       &wrapped);
++
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, wrapped));
 +    return NS_OK;
 +  }
 +
@@ -517,8 +549,7 @@ new file mode 100644
 +    if (aConsuming == CONSUMED) {
 +      nsDOMMediaStream* stream = mComStream.get();
 +      nsRefPtr<SourceMediaStream> sStream = stream->GetStream()->AsSourceStream();
-+      nsresult rv = mSource->Start(sStream.get(), mId);
-+      NS_ENSURE_SUCCESS(rv, rv);
++      mSource->Start(sStream.get(), mId);
 +      return;
 +    }
 +
@@ -537,6 +568,7 @@ new file mode 100644
 +                                const MediaSegment& aQueuedMedia) {}
 +
 +private:
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<MediaEngineSource> mSource;
 +  TrackID mId;
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
@@ -546,33 +578,34 @@ new file mode 100644
 +
 +class GetUserMediaRunnable : public nsRunnable {
 +public:
-+  GetUserMediaRunnable(bool audio, bool video, bool picture,
-+    MediaManager* manager,
-+    nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+    nsIDOMGetUserMediaErrorCallback* onError) {
++  GetUserMediaRunnable(nsIDOMWindow* aWindow,
++		       bool aAudio,
++		       bool aVideo,
++		       bool aPicture,
++		       MediaManager* aManager,
++		       nsIDOMGetUserMediaSuccessCallback* aOnSuccess,
++		       nsIDOMGetUserMediaErrorCallback* aOnError) {
 +
-+    mAudio = audio;
-+    mVideo = video;
-+    mPicture = picture; 
++    mAudio = aAudio;
++    mVideo = aVideo;
++    mPicture = aPicture; 
 +
-+    mManager = manager;
-+    mSuccess = onSuccess;
-+    mError = onError;
++    mManager = aManager;
++    mSuccess = aOnSuccess;
++    mError = aOnError;
++
++    mWindow = aWindow;
 +  }
 +
 +  NS_IMETHOD Run() {
 +    if (mPicture) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
-+      ));
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")));
 +      return NS_OK;
 +    }
 +
 +    // FIXME: Implementing merging two streams (See bug 758391).
 +    if (mAudio && mVideo) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
-+      ));
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")));
 +      return NS_OK;
 +    }
 +
@@ -592,16 +625,12 @@ new file mode 100644
 +
 +      PRInt32 count = videoSources.Length();
 +      if (!count) {
-+        NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+          mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
-+        ));
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")));
 +        return NS_OK;
 +      }
 +
 +      mozilla::MediaEngineVideoSource* videoSource = videoSources[count - 1];
-+      NS_DispatchToMainThread(
-+        new GetUserMediaCallbackRunable(videoSource, kVideoTrack, mSuccess, mError)
-+      );
++      NS_DispatchToMainThread(new GetUserMediaCallbackRunable(mWindow, videoSource, kVideoTrack, mSuccess, mError));
 +      return NS_OK;
 +    }
 +
@@ -611,16 +640,12 @@ new file mode 100644
 +
 +      PRInt32 count = audioSources.Length();
 +      if (!count) {
-+        NS_DispatchToMainThread(new ErrorCallbackRunnable(
-+          mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
-+        ));
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")));
 +        return NS_OK;
 +      }
 +
 +      mozilla::MediaEngineAudioSource* audioSource = audioSources[count - 1];
-+      NS_DispatchToMainThread(
-+        new GetUserMediaCallbackRunable(audioSource, kAudioTrack, mSuccess, mError)
-+      );
++      NS_DispatchToMainThread(new GetUserMediaCallbackRunable(mWindow, audioSource, kAudioTrack, mSuccess, mError));
 +      return NS_OK;
 +    }
 +
@@ -636,6 +661,7 @@ new file mode 100644
 +
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +};
 +
 +
@@ -651,17 +677,20 @@ new file mode 100644
 +}
 +
 +nsresult
-+MediaManager::GetUserMedia(nsIMediaStreamOptions *aParams,
-+  nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+  nsIDOMGetUserMediaErrorCallback* onError)
++MediaManager::GetUserMedia(nsIDOMWindow* aWindow,
++			   nsIMediaStreamOptions *aParams,
++			   nsIDOMGetUserMediaSuccessCallback* onSuccess,
++			   nsIDOMGetUserMediaErrorCallback* onError)
 +{
 +  NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
 +  
 +  bool audio, video, picture;
 +  nsresult rv = aParams->GetPicture(&picture);
 +  NS_ENSURE_SUCCESS(rv, rv);
++
 +  rv = aParams->GetAudio(&audio);
 +  NS_ENSURE_SUCCESS(rv, rv);
++
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
@@ -670,10 +699,7 @@ new file mode 100644
 +  rv = aParams->GetCamera(cameraType);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +  
-+  nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(
-+    audio, video, picture, this, onSuccess, onError
-+  );
-+  NS_ENSURE_TRUE(gUMRunnable, NS_ERROR_OUT_OF_MEMORY);
++  nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(aWindow, audio, video, picture, this, onSuccess, onError);
 +
 +  nsCOMPtr<nsIThread> gUMThread;
 +  rv = NS_NewThread(getter_AddRefs(gUMThread), gUMRunnable);
@@ -689,7 +715,7 @@ diff --git a/dom/media/src/MediaManager.h b/dom/media/src/MediaManager.h
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,32 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -710,9 +736,10 @@ new file mode 100644
 +  NS_DECL_ISUPPORTS
 +
 +  mozilla::MediaEngine* GetBackend();
-+  nsresult GetUserMedia(nsIMediaStreamOptions *aParams,
-+    nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+    nsIDOMGetUserMediaErrorCallback* onError);
++  nsresult GetUserMedia(nsIDOMWindow* aWindow,
++			nsIMediaStreamOptions *aParams,
++			nsIDOMGetUserMediaSuccessCallback* onSuccess,
++			nsIDOMGetUserMediaErrorCallback* onError);
 +
 +private:
 +  mozilla::MediaEngine* mBackend;
@@ -721,7 +748,6 @@ new file mode 100644
 +}
 +}
 +}
-\ No newline at end of file
 diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
 --- a/layout/build/Makefile.in
 +++ b/layout/build/Makefile.in
