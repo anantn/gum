@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent d5157a8e3733783554196a40466af10ec11f1473
+# Parent 3d64a9932d2536032f03aa612208c50c7712919e
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
@@ -743,3 +743,24 @@ diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
  	$(DEPTH)/dom/src/offline/$(LIB_PREFIX)jsdomoffline_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/geolocation/$(LIB_PREFIX)jsdomgeolocation_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/notification/$(LIB_PREFIX)jsdomnotification_s.$(LIB_SUFFIX) \
+diff --git a/mobile/android/installer/package-manifest.in b/mobile/android/installer/package-manifest.in
+--- a/mobile/android/installer/package-manifest.in
++++ b/mobile/android/installer/package-manifest.in
+@@ -158,16 +158,17 @@
+ @BINPATH@/components/dom_apps.xpt
+ @BINPATH@/components/dom_base.xpt
+ @BINPATH@/components/dom_battery.xpt
+ @BINPATH@/components/dom_canvas.xpt
+ @BINPATH@/components/dom_core.xpt
+ @BINPATH@/components/dom_css.xpt
+ @BINPATH@/components/dom_events.xpt
+ @BINPATH@/components/dom_geolocation.xpt
++@BINPATH@/components/dom_media.xpt
+ @BINPATH@/components/dom_network.xpt
+ @BINPATH@/components/dom_notification.xpt
+ @BINPATH@/components/dom_html.xpt
+ @BINPATH@/components/dom_indexeddb.xpt
+ @BINPATH@/components/dom_offline.xpt
+ @BINPATH@/components/dom_json.xpt
+ @BINPATH@/components/dom_range.xpt
+ @BINPATH@/components/dom_sidebar.xpt
