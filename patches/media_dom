@@ -1,12 +1,17 @@
 # HG changeset patch
-# Parent b7fd3ad1f8b49d2dae3c32427f8bdf5de7107e14
+# Parent d5157a8e3733783554196a40466af10ec11f1473
 # User Anant Narayanan <anant@kix.in>
 DOM bindings for gUM
 
 diff --git a/b2g/installer/package-manifest.in b/b2g/installer/package-manifest.in
 --- a/b2g/installer/package-manifest.in
 +++ b/b2g/installer/package-manifest.in
-@@ -167,6 +167,7 @@
+@@ -162,16 +162,17 @@
+ #endif
+ @BINPATH@/components/dom_canvas.xpt
+ @BINPATH@/components/dom_contacts.xpt
+ @BINPATH@/components/dom_core.xpt
+ @BINPATH@/components/dom_css.xpt
  @BINPATH@/components/dom_devicestorage.xpt
  @BINPATH@/components/dom_events.xpt
  @BINPATH@/components/dom_geolocation.xpt
@@ -14,10 +19,20 @@ diff --git a/b2g/installer/package-manifest.in b/b2g/installer/package-manifest.
  @BINPATH@/components/dom_network.xpt
  @BINPATH@/components/dom_notification.xpt
  @BINPATH@/components/dom_html.xpt
+ @BINPATH@/components/dom_indexeddb.xpt
+ @BINPATH@/components/dom_offline.xpt
+ @BINPATH@/components/dom_json.xpt
+ @BINPATH@/components/dom_power.xpt
+ @BINPATH@/components/dom_range.xpt
 diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
 --- a/browser/installer/package-manifest.in
 +++ b/browser/installer/package-manifest.in
-@@ -172,6 +172,7 @@
+@@ -167,16 +167,17 @@
+ #endif
+ @BINPATH@/components/dom_canvas.xpt
+ @BINPATH@/components/dom_contacts.xpt
+ @BINPATH@/components/dom_core.xpt
+ @BINPATH@/components/dom_css.xpt
  @BINPATH@/components/dom_devicestorage.xpt
  @BINPATH@/components/dom_events.xpt
  @BINPATH@/components/dom_geolocation.xpt
@@ -25,10 +40,20 @@ diff --git a/browser/installer/package-manifest.in b/browser/installer/package-m
  @BINPATH@/components/dom_network.xpt
  @BINPATH@/components/dom_notification.xpt
  @BINPATH@/components/dom_html.xpt
+ @BINPATH@/components/dom_indexeddb.xpt
+ @BINPATH@/components/dom_offline.xpt
+ @BINPATH@/components/dom_json.xpt
+ @BINPATH@/components/dom_power.xpt
+ @BINPATH@/components/dom_range.xpt
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -12,11 +12,6 @@
+@@ -7,21 +7,16 @@ topsrcdir = @top_srcdir@
+ srcdir    = @srcdir@
+ VPATH     = @srcdir@
+ 
+ include $(DEPTH)/config/autoconf.mk
+ 
  MODULE = content
  LIBRARY_NAME = gkconmedia_s
  LIBXUL_LIBRARY = 1
@@ -40,10 +65,20 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
  
  EXPORTS = \
    AudioSegment.h \
+   FileBlockCache.h \
+   MediaEngine.h \
+   MediaEngineDefault.h \
+   MediaResource.h \
+   MediaSegment.h \
 diff --git a/dom/Makefile.in b/dom/Makefile.in
 --- a/dom/Makefile.in
 +++ b/dom/Makefile.in
-@@ -50,6 +50,7 @@
+@@ -45,16 +45,17 @@ DIRS += \
+ 
+ DIRS += \
+   apps \
+   base \
+   bindings \
    battery \
    contacts \
    devicestorage \
@@ -51,10 +86,20 @@ diff --git a/dom/Makefile.in b/dom/Makefile.in
    power \
    settings \
    sms \
+   src \
+   locales \
+   network \
+   plugins/base \
+   plugins/ipc \
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 --- a/dom/base/Navigator.cpp
 +++ b/dom/base/Navigator.cpp
-@@ -31,6 +31,7 @@
+@@ -26,16 +26,17 @@
+ #include "nsUnicharUtils.h"
+ #include "mozilla/Preferences.h"
+ #include "mozilla/Telemetry.h"
+ #include "BatteryManager.h"
+ #include "PowerManager.h"
  #include "nsIDOMWakeLock.h"
  #include "nsIPowerManagerService.h"
  #include "SmsManager.h"
@@ -62,7 +107,17 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  #include "nsISmsService.h"
  #include "mozilla/Hal.h"
  #include "nsIWebNavigation.h"
-@@ -92,6 +93,7 @@
+ #include "mozilla/ClearOnShutdown.h"
+ #include "Connection.h"
+ #include "MobileConnection.h"
+ 
+ #ifdef MOZ_B2G_RIL
+@@ -87,16 +88,17 @@ Navigator::~Navigator()
+ }
+ 
+ NS_INTERFACE_MAP_BEGIN(Navigator)
+   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
    NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDeviceStorage)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
@@ -70,7 +125,17 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
-@@ -900,6 +902,27 @@
+ #ifdef MOZ_B2G_RIL
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
+ #endif
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
+ #ifdef MOZ_B2G_BT
+@@ -895,16 +897,37 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+     return NS_ERROR_FAILURE;
+   }
+ 
+   NS_ADDREF(*_retval = mGeolocation);
+   return NS_OK;
  }
  
  //*****************************************************************************
@@ -98,10 +163,20 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  //    Navigator::nsIDOMNavigatorDesktopNotification
  //*****************************************************************************
  
+ NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aRetVal)
+ {
+   NS_ENSURE_ARG_POINTER(aRetVal);
+   *aRetVal = nsnull;
+ 
 diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
 --- a/dom/base/Navigator.h
 +++ b/dom/base/Navigator.h
-@@ -9,6 +9,7 @@
+@@ -4,16 +4,17 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #ifndef mozilla_dom_Navigator_h
+ #define mozilla_dom_Navigator_h
  
  #include "nsIDOMNavigator.h"
  #include "nsIDOMNavigatorGeolocation.h"
@@ -109,7 +184,17 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #include "nsIDOMNavigatorDeviceStorage.h"
  #include "nsIDOMNavigatorDesktopNotification.h"
  #include "nsIDOMClientInformation.h"
-@@ -49,6 +50,10 @@
+ #include "nsIDOMNavigatorBattery.h"
+ #include "nsIDOMNavigatorSms.h"
+ #include "nsIDOMNavigatorNetwork.h"
+ #include "nsAutoPtr.h"
+ #include "nsWeakReference.h"
+@@ -44,27 +45,32 @@ namespace dom {
+ namespace battery {
+ class BatteryManager;
+ } // namespace battery
+ 
+ namespace sms {
  class SmsManager;
  } // namespace sms
  
@@ -120,7 +205,11 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  namespace network {
  class Connection;
  class MobileConnection;
-@@ -60,6 +65,7 @@
+ } // namespace Connection;
+ 
+ namespace power {
+ class PowerManager;
+ } // namespace power
  
  class Navigator : public nsIDOMNavigator
                  , public nsIDOMClientInformation
@@ -128,7 +217,17 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
                  , public nsIDOMNavigatorDeviceStorage
                  , public nsIDOMNavigatorGeolocation
                  , public nsIDOMNavigatorDesktopNotification
-@@ -82,6 +88,7 @@
+                 , public nsIDOMMozNavigatorBattery
+                 , public nsIDOMMozNavigatorSms
+ #ifdef MOZ_B2G_RIL
+                 , public nsIDOMNavigatorTelephony
+ #endif
+@@ -77,16 +83,17 @@ public:
+   Navigator(nsPIDOMWindow *aInnerWindow);
+   virtual ~Navigator();
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSIDOMNAVIGATOR
    NS_DECL_NSIDOMCLIENTINFORMATION
    NS_DECL_NSIDOMNAVIGATORDEVICESTORAGE
    NS_DECL_NSIDOMNAVIGATORGEOLOCATION
@@ -136,7 +235,17 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
    NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
    NS_DECL_NSIDOMMOZNAVIGATORBATTERY
    NS_DECL_NSIDOMMOZNAVIGATORSMS
-@@ -121,6 +128,7 @@
+ #ifdef MOZ_B2G_RIL
+   NS_DECL_NSIDOMNAVIGATORTELEPHONY
+ #endif
+   NS_DECL_NSIDOMMOZNAVIGATORNETWORK
+ 
+@@ -116,16 +123,17 @@ private:
+ 
+   nsRefPtr<nsMimeTypeArray> mMimeTypes;
+   nsRefPtr<nsPluginArray> mPlugins;
+   nsRefPtr<nsGeolocation> mGeolocation;
+   nsRefPtr<nsDesktopNotificationCenter> mNotification;
    nsRefPtr<battery::BatteryManager> mBatteryManager;
    nsRefPtr<power::PowerManager> mPowerManager;
    nsRefPtr<sms::SmsManager> mSmsManager;
@@ -144,10 +253,20 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #ifdef MOZ_B2G_RIL
    nsCOMPtr<nsIDOMTelephony> mTelephony;
  #endif
+   nsRefPtr<network::Connection> mConnection;
+   nsRefPtr<network::MobileConnection> mMobileConnection;
+ #ifdef MOZ_B2G_BT
+   nsCOMPtr<nsIDOMBluetoothManager> mBluetooth;
+ #endif
 diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 --- a/dom/base/nsDOMClassInfo.cpp
 +++ b/dom/base/nsDOMClassInfo.cpp
-@@ -427,6 +427,9 @@
+@@ -422,16 +422,19 @@
+ #include "nsIDOMDataTransfer.h"
+ 
+ // Geolocation
+ #include "nsIDOMGeoGeolocation.h"
+ #include "nsIDOMGeoPosition.h"
  #include "nsIDOMGeoPositionCoords.h"
  #include "nsIDOMGeoPositionError.h"
  
@@ -157,7 +276,17 @@ diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
  // Workers
  #include "mozilla/dom/workers/Workers.h"
  
-@@ -2447,6 +2450,7 @@
+ #include "nsDOMFile.h"
+ #include "nsDOMFileReader.h"
+ #include "nsIDOMFormData.h"
+ 
+ #include "nsIDOMDOMStringMap.h"
+@@ -2442,16 +2445,17 @@ nsDOMClassInfo::Init()
+   DOM_CLASSINFO_MAP_BEGIN(Location, nsIDOMLocation)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMLocation)
+   DOM_CLASSINFO_MAP_END
+ 
+   DOM_CLASSINFO_MAP_BEGIN(Navigator, nsIDOMNavigator)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigator)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorDeviceStorage)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorGeolocation)
@@ -165,6 +294,11 @@ diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
      DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMNavigatorDesktopNotification,
                                          Navigator::HasDesktopNotificationSupport())
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMClientInformation)
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMMozNavigatorBattery,
+                                         battery::BatteryManager::HasSupport())
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_B2G_RIL
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorTelephony)
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -302,7 +436,7 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/src/MediaManager.cpp
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,248 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -349,32 +483,65 @@ new file mode 100644
 + * This runnable creates a nsDOMMediaStream from a given MediaEngineSource
 + * and returns it via a success callback. Both must be done on the main thread.
 + */
-+class GetUserMediaCallbackRunable : public nsRunnable {
++class GetUserMediaCallbackRunable : public nsRunnable,
++                                    public MediaStreamListener {
 +public:
 +  GetUserMediaCallbackRunable(
-+    MediaEngineSource *aSource, TrackID aId, nsIDOMGetUserMediaSuccessCallback *aCallback) :
-+    mSource(aSource), mId(aId), mCallback(aCallback) {}
++    MediaEngineSource *aSource, TrackID aId,
++    nsIDOMGetUserMediaSuccessCallback *aSuccess,
++    nsIDOMGetUserMediaErrorCallback *aError) :
++    mSource(aSource), mId(aId), mSuccess(aSuccess), mError(aError) {}
 +
 +  NS_IMETHOD Run() {
 +    // Normally we would now get the name & UUID for the device and ask the
 +    // user permission. We will do that when we have some UI.
-+    nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
-+    nsDOMMediaStream* stream = comStream.get();
++    mComStream = mSource->Allocate();
++    if (mComStream == nsnull) {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE");
++      ));
++      return NS_ERROR_FAILURE;
++    }
++    
++    // Add our listener. We'll call Start() on the source when get a bcallback
++    // that the MediaStream has started consuming.
++    nsDOMMediaStream* stream = mComStream.get();
++    MediaStream* mediaStream = stream->GetStream();
++    mediaStream->AddListener(this);
 +
-+    // Call Start() too because we don't have a NotifyStartConsuming callback
-+    // from the MediaStream yet. FIXME: Change this when do, add failure case
-+    nsRefPtr<SourceMediaStream> sStream = stream->GetStream()->AsSourceStream();
-+    nsresult rv = mSource->Start(sStream.get(), mId);
-+    NS_ENSURE_SUCCESS(rv, rv);
-+
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(mCallback, stream));
++    NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccess, stream));
 +    return NS_OK;
 +  }
++
++  void NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming) {
++    if (aConsuming == CONSUMED) {
++      nsDOMMediaStream* stream = mComStream.get();
++      nsRefPtr<SourceMediaStream> sStream = stream->GetStream()->AsSourceStream();
++      nsresult rv = mSource->Start(sStream.get(), mId);
++      NS_ENSURE_SUCCESS(rv, rv);
++      return;
++    }
++
++    // NOT_CONSUMED
++    mSource->Stop();
++    return;
++  }
++
++  void NotifyBlockingChanged(MediaStreamGraph* aGraph, Blocking aBlocked) {}
++  void NotifyOutput(MediaStreamGraph* aGraph) {}
++  void NotifyFinished(MediaStreamGraph* aGraph) {}
++  void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
++                                TrackRate aTrackRate,
++                                TrackTicks aTrackOffset,
++                                PRUint32 aTrackEvents,
++                                const MediaSegment& aQueuedMedia) {}
 +
 +private:
 +  nsCOMPtr<MediaEngineSource> mSource;
 +  TrackID mId;
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mCallback;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
++  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  nsCOMPtr<nsDOMMediaStream> mComStream;
 +};
 +
 +class GetUserMediaRunnable : public nsRunnable {
@@ -433,7 +600,7 @@ new file mode 100644
 +
 +      mozilla::MediaEngineVideoSource* videoSource = videoSources[count - 1];
 +      NS_DispatchToMainThread(
-+        new GetUserMediaCallbackRunable(videoSource, kVideoTrack, mSuccess)
++        new GetUserMediaCallbackRunable(videoSource, kVideoTrack, mSuccess, mError)
 +      );
 +      return NS_OK;
 +    }
@@ -452,7 +619,7 @@ new file mode 100644
 +
 +      mozilla::MediaEngineAudioSource* audioSource = audioSources[count - 1];
 +      NS_DispatchToMainThread(
-+        new GetUserMediaCallbackRunable(audioSource, kAudioTrack, mSuccess)
++        new GetUserMediaCallbackRunable(audioSource, kAudioTrack, mSuccess, mError)
 +      );
 +      return NS_OK;
 +    }
@@ -558,7 +725,12 @@ new file mode 100644
 diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
 --- a/layout/build/Makefile.in
 +++ b/layout/build/Makefile.in
-@@ -66,6 +66,7 @@
+@@ -61,16 +61,17 @@ SHARED_LIBRARY_LIBS = \
+ 	$(DEPTH)/view/src/$(LIB_PREFIX)gkview_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/base/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/battery/$(LIB_PREFIX)dom_battery_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/contacts/$(LIB_PREFIX)jsdomcontacts_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/devicestorage/$(LIB_PREFIX)domdevicestorage_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/power/$(LIB_PREFIX)dom_power_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/settings/$(LIB_PREFIX)jsdomsettings_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/network/src/$(LIB_PREFIX)dom_network_s.$(LIB_SUFFIX) \
@@ -566,3 +738,8 @@ diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
  	$(DEPTH)/dom/sms/src/$(LIB_PREFIX)dom_sms_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/events/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/json/$(LIB_PREFIX)json_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/jsurl/$(LIB_PREFIX)jsurl_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/storage/$(LIB_PREFIX)jsdomstorage_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/offline/$(LIB_PREFIX)jsdomoffline_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/geolocation/$(LIB_PREFIX)jsdomgeolocation_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/notification/$(LIB_PREFIX)jsdomnotification_s.$(LIB_SUFFIX) \
