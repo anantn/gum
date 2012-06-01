@@ -2,7 +2,7 @@
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
-# Parent 3743f42cd6ab6a1d87bb8a4a3ea1bc916cca0bf9
+# Parent 7d1a6d0b0128b817264a919646fd0cb25183dd79
 [mq]: media_engine_api_change
 
 diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
@@ -333,31 +333,6 @@ diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
        if (!count) {
          NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")));
          return NS_OK;
-diff --git a/js/src/jsapi.cpp b/js/src/jsapi.cpp
---- a/js/src/jsapi.cpp
-+++ b/js/src/jsapi.cpp
-@@ -2037,19 +2037,19 @@ JS_EnumerateStandardClasses(JSContext *c
-                              JS_PropertyStub, JS_StrictPropertyStub,
-                              JSPROP_PERMANENT | JSPROP_READONLY)) {
-         return false;
-     }
- 
-     /* Initialize any classes that have not been initialized yet. */
-     for (unsigned i = 0; standard_class_atoms[i].init; i++) {
-         const JSStdName &stdnm = standard_class_atoms[i];
--        if (!js::IsStandardClassResolved(obj, stdnm.clasp) &&
-+        if (!js::IsStandardClassResolved(obj, stdnm.clasp)
- #if JS_HAS_XML_SUPPORT
--            ((stdnm.init != js_InitXMLClass &&
-+            && ((stdnm.init != js_InitXMLClass &&
-               stdnm.init != js_InitNamespaceClass &&
-               stdnm.init != js_InitQNameClass) ||
-              VersionHasAllowXML(cx->findVersion()))
- #endif
-             )
-         {
-             if (!stdnm.init(cx, obj))
-                 return false;
 diff --git a/mobile/android/app/mobile.js b/mobile/android/app/mobile.js
 --- a/mobile/android/app/mobile.js
 +++ b/mobile/android/app/mobile.js
