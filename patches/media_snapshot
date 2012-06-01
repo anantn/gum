@@ -2,43 +2,9 @@
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
-# Parent 7d1a6d0b0128b817264a919646fd0cb25183dd79
+# Parent a1190b56217b383d7fae7cf3748b7291f289682d
 [mq]: media_engine_api_change
 
-diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
---- a/content/media/MediaEngine.h
-+++ b/content/media/MediaEngine.h
-@@ -59,16 +59,18 @@ public:
-    * immediately after. */
-   virtual nsresult Start(SourceMediaStream*, TrackID) = 0;
-   
-   /* Stop the device and release the corresponding MediaStream */
-   virtual nsresult Stop() = 0;
-   
-   /* It is an error to call Start() before an Allocate(), and Stop() before
-    * a Start(). Only Allocate() may be called after a Deallocate(). */
-+
-+  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile) = 0;
- };
- 
- /**
-  * Video source and friends.
-  */
- enum MediaEngineVideoCodecType {
-   kVideoCodecH263,
-   kVideoCodecVP8,
-@@ -98,9 +100,9 @@ public:
- class MediaEngineAudioSource : public MediaEngineSource
- {
- public:
-   virtual ~MediaEngineAudioSource() {};
- };
- 
- }
- 
--#endif /* MEDIAENGINE_H_ */
-\ No newline at end of file
-+#endif /* MEDIAENGINE_H_ */
 diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
 --- a/content/media/MediaEngineDefault.cpp
 +++ b/content/media/MediaEngineDefault.cpp
@@ -62,18 +28,15 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  
  namespace mozilla {
  
-@@ -141,16 +146,31 @@ MediaEngineDefaultVideoSource::Stop()
- 
-   mSource->EndTrack(mTrackID);
-   mSource->Finish();
+@@ -144,16 +149,24 @@ MediaEngineDefaultVideoSource::Stop()
  
    mState = kStopped;
    return NS_OK;
  }
  
-+nsresult
-+MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
-+{
+ nsresult
+ MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
+ {
 +#ifdef ANDROID
 +   nsAutoString filePath;
 +   if (mozilla::AndroidBridge::Bridge()) {
@@ -82,267 +45,11 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
 +     return rv;
 +  }
 +#endif
-+   *aFile = nsnull;
-+   return NS_ERROR_NOT_IMPLEMENTED;
-+}
-+
+    *aFile = nsnull;
+    return NS_ERROR_NOT_IMPLEMENTED;
+ }
+ 
  NS_IMETHODIMP
  MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
  {
    VideoSegment segment;
- 
-   nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
-   segment.AppendFrame(image.forget(), USECS_PER_S / FPS, gfxIntSize(WIDTH, HEIGHT));
-   mSource->AppendToTrack(mTrackID, &segment);
-@@ -243,16 +263,22 @@ MediaEngineDefaultAudioSource::Stop()
- 
-   mSource->EndTrack(mTrackID);
-   mSource->Finish();
- 
-   mState = kStopped;
-   return NS_OK;
- }
- 
-+nsresult
-+MediaEngineDefaultAudioSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
-+{
-+   return NS_ERROR_NOT_IMPLEMENTED;
-+}
-+
- NS_IMETHODIMP
- MediaEngineDefaultAudioSource::Notify(nsITimer* aTimer)
- {
-   AudioSegment segment;
-   segment.Init(CHANNELS);
-   segment.InsertNullDataAtStart(1);
- 
-   mSource->AppendToTrack(mTrackID, &segment);
-diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefault.h
---- a/content/media/MediaEngineDefault.h
-+++ b/content/media/MediaEngineDefault.h
-@@ -46,16 +46,17 @@ public:
-   virtual void GetUUID(nsAString&);
- 
-   virtual MediaEngineVideoOptions GetOptions();
-   virtual already_AddRefed<nsDOMMediaStream> Allocate();
- 
-   virtual nsresult Deallocate();
-   virtual nsresult Start(SourceMediaStream*, TrackID);
-   virtual nsresult Stop();
-+  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile);
- 
-   NS_DECL_ISUPPORTS
-   NS_DECL_NSITIMERCALLBACK
- 
- protected:
-   TrackID mTrackID;
-   nsCOMPtr<nsITimer> mTimer;
-   nsRefPtr<layers::ImageContainer> mImageContainer;
-@@ -76,16 +77,17 @@ public:
-   virtual void GetName(nsAString&);
-   virtual void GetUUID(nsAString&);
- 
-   virtual already_AddRefed<nsDOMMediaStream> Allocate();
- 
-   virtual nsresult Deallocate();
-   virtual nsresult Start(SourceMediaStream*, TrackID);
-   virtual nsresult Stop();
-+  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile);
- 
-   NS_DECL_ISUPPORTS
-   NS_DECL_NSITIMERCALLBACK
- 
- protected:
-   TrackID mTrackID;
-   nsCOMPtr<nsITimer> mTimer;
- 
-@@ -107,9 +109,9 @@ public:
- 
- private:
-   nsRefPtr<MediaEngineVideoSource> mVSource;
-   nsRefPtr<MediaEngineAudioSource> mASource;
- };
- 
- }
- 
--#endif /* NSMEDIAENGINEDEFAULT_H_ */
-\ No newline at end of file
-+#endif /* NSMEDIAENGINEDEFAULT_H_ */
-diff --git a/dom/media/src/MediaManager.cpp b/dom/media/src/MediaManager.cpp
---- a/dom/media/src/MediaManager.cpp
-+++ b/dom/media/src/MediaManager.cpp
-@@ -1,16 +1,17 @@
- /* This Source Code Form is subject to the terms of the Mozilla Public
-  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-  * You can obtain one at http://mozilla.org/MPL/2.0/. */
- 
- #include "MediaManager.h"
- #include "nsJSUtils.h"
- #include "nsIScriptGlobalObject.h"
- #include "nsContentUtils.h"
-+#include "nsDOMFile.h"
- 
- namespace mozilla {
- namespace dom {
- namespace media {
- 
- class ErrorCallbackRunnable : public nsRunnable {
- public:
-   ErrorCallbackRunnable(nsIDOMGetUserMediaErrorCallback *aError, const nsString& aErrorMsg)
-@@ -129,16 +130,89 @@ private:
-   nsCOMPtr<nsIDOMWindow> mWindow;
-   nsCOMPtr<MediaEngineSource> mSource;
-   TrackID mId;
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
-   nsCOMPtr<nsDOMMediaStream> mComStream;
- };
- 
-+class GetUserMediaSnapshotCallbackRunable : public nsRunnable {
-+public:
-+  GetUserMediaSnapshotCallbackRunable(nsIDOMWindow *aWindow,
-+				      MediaEngineSource *aSource,
-+				      PRUint32 aDuration,
-+				      nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
-+				      nsIDOMGetUserMediaErrorCallback *aErrorCallback)
-+    : mWindow(aWindow)
-+    , mSource(aSource)
-+    , mDuration(aDuration)
-+    , mSuccessCallback(aSuccessCallback)
-+    , mErrorCallback(aErrorCallback) {}
-+
-+  jsval nsIFileToJsval(nsILocalFile* aFile)
-+  {
-+    if (aFile == nsnull) {
-+      return JSVAL_NULL;
-+    }
-+    nsCOMPtr<nsIDOMBlob> blob = new nsDOMFileFile(aFile);
-+    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mWindow);
-+    if (!sgo) {
-+      return JSVAL_NULL;
-+    }
-+    nsIScriptContext *scriptContext = sgo->GetScriptContext();
-+    if (!scriptContext) {
-+      return JSVAL_NULL;
-+    }
-+    JSContext *cx = scriptContext->GetNativeContext();
-+    if (!cx) {
-+      return JSVAL_NULL;
-+    }
-+
-+    jsval wrappedFile;
-+    nsresult rv = nsContentUtils::WrapNative(cx,
-+					     JS_GetGlobalObject(cx),
-+					     blob,
-+					     &NS_GET_IID(nsIDOMFile),
-+					     &wrappedFile);
-+    if (NS_FAILED(rv)) {
-+      return JSVAL_NULL;
-+    }
-+    return wrappedFile;
-+  }
-+
-+  NS_IMETHOD Run() {
-+
-+    nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
-+    if (comStream == nsnull) {
-+	NS_DispatchToMainThread(new ErrorCallbackRunnable(mErrorCallback, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")));
-+      return NS_ERROR_FAILURE;
-+    }
-+
-+    nsCOMPtr<nsILocalFile> file;
-+    nsresult rv = mSource->Snapshot(mDuration, getter_AddRefs(file));
-+
-+    jsval wrapped = nsIFileToJsval(file);
-+    if (NS_FAILED(rv) || wrapped == JSVAL_NULL) {
-+      NS_DispatchToMainThread(new ErrorCallbackRunnable(mErrorCallback, NS_LITERAL_STRING("UNKNOWN_ERROR")));
-+      return NS_OK;
-+    }
-+
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(mSuccessCallback, wrapped));
-+    return NS_OK;
-+  }
-+
-+private:
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-+  nsCOMPtr<MediaEngineSource> mSource;
-+  PRUint32 mDuration;
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccessCallback;
-+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback>  mErrorCallback;
-+};
-+
- class GetUserMediaRunnable : public nsRunnable {
- public:
-   GetUserMediaRunnable(nsIDOMWindow* aWindow,
- 		       bool aAudio,
- 		       bool aVideo,
- 		       bool aPicture,
- 		       MediaManager* aManager,
- 		       nsIDOMGetUserMediaSuccessCallback* aOnSuccess,
-@@ -151,37 +225,48 @@ public:
-     mManager = aManager;
-     mSuccess = aOnSuccess;
-     mError = aOnError;
- 
-     mWindow = aWindow;
-   }
- 
-   NS_IMETHOD Run() {
-+
-+    nsTArray<nsRefPtr<mozilla::MediaEngineVideoSource> > videoSources;
-+    nsTArray<nsRefPtr<mozilla::MediaEngineAudioSource> > audioSources;
-+    mozilla::MediaEngine* mBackend = mManager->GetBackend();  
-+
-     if (mPicture) {
--      NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")));
-+
-+      // Pick the last device in the list for now
-+      mBackend->EnumerateVideoDevices(&videoSources);
-+
-+      PRInt32 count = videoSources.Length();
-+      if (!count) {
-+        NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")));
-+        return NS_OK;
-+      }
-+      mozilla::MediaEngineVideoSource* videoSource = videoSources[count - 1];
-+      NS_DispatchToMainThread(new GetUserMediaSnapshotCallbackRunable(mWindow, videoSource, 0 /* duration */, mSuccess, mError));
-       return NS_OK;
-     }
- 
-     // FIXME: Implementing merging two streams (See bug 758391).
-     if (mAudio && mVideo) {
-       NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")));
-       return NS_OK;
-     }
- 
-     // We only support 1 audio and 1 video track for now
-     enum {
-       kVideoTrack = 1,
-       kAudioTrack = 2
-     };
- 
--    nsTArray<nsRefPtr<mozilla::MediaEngineVideoSource> > videoSources;
--    nsTArray<nsRefPtr<mozilla::MediaEngineAudioSource> > audioSources;
--    mozilla::MediaEngine* mBackend = mManager->GetBackend();  
--
-     if (mVideo) {
-       // Pick the last device in the list for now
-       mBackend->EnumerateVideoDevices(&videoSources);
- 
-       PRInt32 count = videoSources.Length();
-       if (!count) {
-         NS_DispatchToMainThread(new ErrorCallbackRunnable(mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")));
-         return NS_OK;
-diff --git a/mobile/android/app/mobile.js b/mobile/android/app/mobile.js
---- a/mobile/android/app/mobile.js
-+++ b/mobile/android/app/mobile.js
-@@ -714,8 +714,9 @@ pref("ui.scrolling.min_scrollable_distan
- // interpolation frames for zoom animations.
- pref("ui.zooming.animation_frames", "");
- 
- // Enable accessibility mode if platform accessibility is enabled.
- pref("accessibility.accessfu.activate", 2);
- 
- // Mobile manages state by autodetection
- pref("network.manage-offline-status", true);
-+

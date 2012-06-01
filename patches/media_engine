@@ -1,12 +1,12 @@
 # HG changeset patch
-# Parent baf25d48d75eab1aec9c2f4f4d1935cbd4654e00
+# Parent 1bc4542bb06ddcb905239a9e8de3841243a77435
 # User Anant Narayanan <anant@kix.in>
 Abstract media engine interface
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -48,16 +48,17 @@ XPIDL_MODULE = content_media
+@@ -16,16 +16,17 @@ XPIDL_MODULE = content_media
  
  XPIDLSRCS = \
    nsIDOMMediaStream.idl \
@@ -28,7 +28,7 @@ diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,112 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -90,6 +90,12 @@ new file mode 100644
 +   * immediately after. */
 +  virtual nsresult Start(SourceMediaStream*, TrackID) = 0;
 +  
++  /* Take a snapshot from this source. In the case of video this is a single
++   * image, and for audio, it is a snippet lasting aDuration milliseconds. The
++   * duration argument is ignored for a MediaEngineVideoSource.
++   */
++  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile) = 0;
++
 +  /* Stop the device and release the corresponding MediaStream */
 +  virtual nsresult Stop() = 0;
 +  
@@ -135,4 +141,3 @@ new file mode 100644
 +}
 +
 +#endif /* MEDIAENGINE_H_ */
-\ No newline at end of file

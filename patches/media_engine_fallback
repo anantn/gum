@@ -1,12 +1,12 @@
 # HG changeset patch
-# Parent 37896692d2b52a6cefb9e15ca5f97c755f12c80e
+# Parent 97f134f219e671909d3cabb17474069b8f911cc3
 # User Anant Narayanan <anant@kix.in>
 Implement fallback media engine
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -49,16 +49,17 @@ XPIDL_MODULE = content_media
+@@ -17,16 +17,17 @@ XPIDL_MODULE = content_media
  XPIDLSRCS = \
    nsIDOMMediaStream.idl \
    $(NULL)
@@ -24,7 +24,7 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    nsBuiltinDecoderStateMachine.h \
    nsBuiltinDecoderReader.h \
    nsDOMMediaStream.h \
-@@ -70,16 +71,17 @@ EXPORTS = \
+@@ -38,16 +39,17 @@ EXPORTS = \
    VideoFrameContainer.h \
    VideoUtils.h \
    VideoSegment.h \
@@ -46,7 +46,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngineDefault.cpp
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,288 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -195,6 +195,13 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
++nsresult
++MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
++{
++   *aFile = nsnull;
++   return NS_ERROR_NOT_IMPLEMENTED;
++}
++
 +NS_IMETHODIMP
 +MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
 +{
@@ -297,6 +304,12 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
++nsresult
++MediaEngineDefaultAudioSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
++{
++   return NS_ERROR_NOT_IMPLEMENTED;
++}
++
 +NS_IMETHODIMP
 +MediaEngineDefaultAudioSource::Notify(nsITimer* aTimer)
 +{
@@ -326,7 +339,7 @@ diff --git a/content/media/MediaEngineDefault.h b/content/media/MediaEngineDefau
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngineDefault.h
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,117 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -380,6 +393,7 @@ new file mode 100644
 +  virtual nsresult Deallocate();
 +  virtual nsresult Start(SourceMediaStream*, TrackID);
 +  virtual nsresult Stop();
++  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile);
 +
 +  NS_DECL_ISUPPORTS
 +  NS_DECL_NSITIMERCALLBACK
@@ -410,6 +424,7 @@ new file mode 100644
 +  virtual nsresult Deallocate();
 +  virtual nsresult Start(SourceMediaStream*, TrackID);
 +  virtual nsresult Stop();
++  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile);
 +
 +  NS_DECL_ISUPPORTS
 +  NS_DECL_NSITIMERCALLBACK
@@ -442,4 +457,3 @@ new file mode 100644
 +}
 +
 +#endif /* NSMEDIAENGINEDEFAULT_H_ */
-\ No newline at end of file
