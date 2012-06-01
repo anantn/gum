@@ -2,7 +2,11 @@
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
-# Parent 18094e796e03aeda191ef2c514c15f1754af7a30
+<<<<<<< Updated upstream
+# Parent 6bb78db624452353e8c394dee33116acd4fd2a4a
+=======
+# Parent 5b8814f39e93d56bfd43a30da39a72a920928d0b
+>>>>>>> Stashed changes
 try: -b do -p all -u all -t all
 
 diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
@@ -28,7 +32,56 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  #define RATE USECS_PER_S
  
  namespace mozilla {
-@@ -144,16 +150,27 @@ MediaEngineDefaultVideoSource::Stop()
+@@ -74,26 +80,26 @@ MediaEngineDefaultVideoSource::Start(Sou
+     return NULL;
+   }
+ 
+   mSource = aStream;
+ 
+   // Allocate a single blank Image
+   layers::Image::Format format = layers::Image::PLANAR_YCBCR;
+   mImageContainer = layers::LayerManager::CreateImageContainer();
+-    
++
+   nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&format, 1);
+-  
++
+   int len = ((WIDTH * HEIGHT) * 3 / 2);
+   mImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
+   PRUint8* frame = (PRUint8*) PR_Malloc(len);
+   memset(frame, 0x80, len); // Gray
+ 
+   const PRUint8 lumaBpp = 8;
+-  const PRUint8 chromaBpp = 4; 
++  const PRUint8 chromaBpp = 4;
+ 
+   layers::PlanarYCbCrImage::Data data;
+   data.mYChannel = frame;
+   data.mYSize = gfxIntSize(WIDTH, HEIGHT);
+   data.mYStride = WIDTH * lumaBpp / 8.0;
+   data.mCbCrStride = WIDTH * chromaBpp / 8.0;
+   data.mCbChannel = frame + HEIGHT * data.mYStride;
+   data.mCrChannel = data.mCbChannel + HEIGHT * data.mCbCrStride / 2;
+@@ -117,17 +123,17 @@ MediaEngineDefaultVideoSource::Start(Sou
+   mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+ 
+   // Remember TrackID so we can end it later
+   mTrackID = aID;
+ 
+   // Start timer for subsequent frames
+   mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
+   mState = kStarted;
+-  
++
+   return NS_OK;
+ }
+ 
+ nsresult
+ MediaEngineDefaultVideoSource::Stop()
+ {
+   if (mState != kStarted) {
+     return NS_ERROR_FAILURE;
+@@ -144,18 +150,34 @@ MediaEngineDefaultVideoSource::Stop()
  
    mState = kStopped;
    return NS_OK;
@@ -37,25 +90,34 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  nsresult
  MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsIDOMFile** aFile)
  {
-+#ifdef ANDROID
+-   *aFile = nsnull;
+-   return NS_ERROR_NOT_IMPLEMENTED;
++  *aFile = nsnull;
++
++#ifndef MOZ_WIDGET_ANDROID
++  return NS_ERROR_NOT_IMPLEMENTED;
++#else
 +  nsAutoString filePath;
 +  nsCOMPtr<nsILocalFile> localFile;
-+  if (mozilla::AndroidBridge::Bridge()) {
-+    mozilla::AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
-+    nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(localFile));
-+    NS_ENSURE_SUCCESS(rv,rv);
-+    *aFile = new nsDOMFileFile(localFile);
-+    return rv;
++  if (!AndroidBridge::Bridge()) {
++    return NS_ERROR_UNEXPECTED;
 +  }
-+#endif
-    *aFile = nsnull;
-    return NS_ERROR_NOT_IMPLEMENTED;
++  if (!AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"))) {
++    return NS_ERROR_UNEXPECTED;
++  }
++
++  nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(localFile));
++  NS_ENSURE_SUCCESS(rv,rv);
++  NS_ADDREF(*aFile = new nsDOMFileFile(localFile));
++  return NS_OK;
  }
  
  NS_IMETHODIMP
  MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
  {
    VideoSegment segment;
+ 
+   nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 --- a/dom/base/Navigator.cpp
 +++ b/dom/base/Navigator.cpp
@@ -99,316 +161,3 @@ diff --git a/dom/dom-config.mk b/dom/dom-config.mk
    dom/src/storage \
    dom/src/offline \
    dom/src/geolocation \
-diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
---- a/dom/media/MediaManager.cpp
-+++ b/dom/media/MediaManager.cpp
-@@ -8,44 +8,22 @@
- #include "MediaEngineDefault.h"
- 
- #include "nsIDOMFile.h"
- #include "nsIScriptGlobalObject.h"
- 
- #include "nsJSUtils.h"
- #include "nsDOMFile.h"
- #include "nsContentUtils.h"
-+#include "nsProxyRelease.h"
- 
- namespace mozilla {
- namespace dom {
- namespace media {
- 
--class DOMWindowHolder : public nsISupports
--{
--public:
--  DOMWindowHolder(nsIDOMWindow* aWindow)
--    : mWindow(aWindow) {}
--
--  ~DOMWindowHolder() {}
--
--  NS_DECL_ISUPPORTS
--
--  nsIDOMWindow*
--  GetDOMWindow()
--  {
--    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
--    return mWindow;
--  }
--private:
--  nsCOMPtr<nsIDOMWindow> mWindow;
--};
--
--NS_IMPL_THREADSAFE_ISUPPORTS0(DOMWindowHolder)
--
--
- class ErrorCallbackRunnable : public nsRunnable {
- public:
-   ErrorCallbackRunnable(nsIDOMGetUserMediaErrorCallback *aError,
-     const nsString& aErrorMsg)
-     : mError(aError)
-     , mErrorMsg(aErrorMsg) {}
- 
-   NS_IMETHOD
-@@ -57,33 +35,36 @@ public:
- 
- private:
-   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
-   const nsString mErrorMsg;
- };
- 
- class SuccessCallbackRunnable : public nsRunnable {
- public:
--  SuccessCallbackRunnable(DOMWindowHolder* aWindow,
-+  SuccessCallbackRunnable(nsCOMPtr<nsIDOMWindow>& aWindow,
-     nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMFile* aFile)
--    : mWindow(aWindow)
--    , mSuccess(aSuccess)
--    , mFile(aFile) {}
-+    : mSuccess(aSuccess)
-+    , mFile(aFile)
-+  {
-+    mWindow.swap(aWindow);
-+  }
- 
--  SuccessCallbackRunnable(DOMWindowHolder* aWindow,
-+  SuccessCallbackRunnable(nsCOMPtr<nsIDOMWindow>& aWindow,
-     nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *aStream)
--    : mWindow(aWindow)
--    , mSuccess(aSuccess)
--    , mStream(aStream) {}
-+    : mSuccess(aSuccess)
-+    , mStream(aStream)
-+  {
-+    mWindow.swap(aWindow);
-+  }
- 
-   JSContext*
-   contextForWindow()
-   {
--    nsCOMPtr<nsIDOMWindow> window = mWindow->GetDOMWindow();
--    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(window);
-+    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mWindow);
-     if (!sgo) {
-       return nsnull;
-     }
-     nsIScriptContext *scriptContext = sgo->GetScriptContext();
-     if (!scriptContext) {
-       return nsnull;
-     }
-     JSContext *cx = scriptContext->GetNativeContext();
-@@ -133,38 +114,39 @@ public:
-       result = streamToJsval(mStream);
-     }
- 
-     mSuccess->OnSuccess(result);
-     return NS_OK;
-   }
- 
- private:
--  nsRefPtr<DOMWindowHolder> mWindow;
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-   nsCOMPtr<nsIDOMFile> mFile;
-   nsCOMPtr<nsIDOMMediaStream> mStream;
- };
- 
- /**
-  * This runnable creates a nsDOMMediaStream from a given MediaEngineSource
-  * and returns it via a success callback. Both must be done on the main thread.
-  */
- class GetUserMediaCallbackRunnable : public nsRunnable {
- public:
--  GetUserMediaCallbackRunnable(DOMWindowHolder *aWindow,
--    MediaEngineSource *aSource, TrackID aId,
--    nsIDOMGetUserMediaSuccessCallback *aSuccess,
--    nsIDOMGetUserMediaErrorCallback *aError)
--    : mWindow(aWindow)
--    , mSource(aSource)
-+  GetUserMediaCallbackRunnable(nsCOMPtr<nsIDOMWindow>&aWindow,
-+			       MediaEngineSource *aSource, TrackID aId,
-+			       nsIDOMGetUserMediaSuccessCallback *aSuccess,
-+			       nsIDOMGetUserMediaErrorCallback *aError)
-+    : mSource(aSource)
-     , mId(aId)
-     , mSuccess(aSuccess)
--    , mError(aError) {}
--
-+    , mError(aError)
-+  {
-+    mWindow.swap(aWindow);
-+  }
- 
-   /**
-    * This inner class is an implementation of MediaStreamListener
-    */
-   class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener {
-   public:
-     GetUserMediaCallbackMediaStreamListener(MediaEngineSource *aSource,
-       nsDOMMediaStream *aStream, TrackID aListenId)
-@@ -224,35 +206,37 @@ public:
- 
-     NS_DispatchToMainThread(new SuccessCallbackRunnable(
-       mWindow, mSuccess, stream
-     ));
-     return NS_OK;
-   }
- 
- private:
--  nsRefPtr<DOMWindowHolder> mWindow;
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-   nsCOMPtr<MediaEngineSource> mSource;
-   TrackID mId;
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
- };
- 
- class GetUserMediaSnapshotCallbackRunable : public nsRunnable {
- public:
--  GetUserMediaSnapshotCallbackRunable(DOMWindowHolder *aWindow,
--    MediaEngineSource *aSource,
--    PRUint32 aDuration,
--    nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
--    nsIDOMGetUserMediaErrorCallback *aErrorCallback)
--    : mWindow(aWindow)
--    , mSource(aSource)
-+  GetUserMediaSnapshotCallbackRunable(nsCOMPtr<nsIDOMWindow>& aWindow,
-+				      MediaEngineSource *aSource,
-+				      PRUint32 aDuration,
-+				      nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
-+				      nsIDOMGetUserMediaErrorCallback *aErrorCallback)
-+    : mSource(aSource)
-     , mDuration(aDuration)
-     , mSuccessCallback(aSuccessCallback)
--    , mErrorCallback(aErrorCallback) {}
-+    , mErrorCallback(aErrorCallback)
-+  {
-+    mWindow.swap(aWindow);
-+  }
- 
-   NS_IMETHOD
-   Run()
-   {
-     nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
-     if (comStream == nsnull) {
-       NS_DispatchToMainThread(new ErrorCallbackRunnable(
-         mErrorCallback, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")
-@@ -265,56 +249,69 @@ public:
- 
-     NS_DispatchToMainThread(new SuccessCallbackRunnable(
-       mWindow, mSuccessCallback, file
-     ));
-     return NS_OK;
-   }
- 
- private:
--  nsRefPtr<DOMWindowHolder> mWindow;
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-   nsCOMPtr<MediaEngineSource> mSource;
-   PRUint32 mDuration;
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccessCallback;
-   nsCOMPtr<nsIDOMGetUserMediaErrorCallback>  mErrorCallback;
- };
- 
- /**
-  * Runs on a seperate thread and is responsible for enumerating devices.
-  * Depending on whether a picture or stream was asked for, either
-  * GetUserMediaCallbackRunnable or GetUserMediaSnapshotCallbackRunnable
-  * will be dispatched to the main thread to return the result to DOM.
-  */
- class GetUserMediaRunnable : public nsRunnable {
- public:
-   GetUserMediaRunnable(nsIDOMWindow* aWindow,
--    bool aAudio, bool aVideo, bool aPicture,
--    MediaManager* aManager,
--    nsIDOMGetUserMediaSuccessCallback* aSuccess,
--    nsIDOMGetUserMediaErrorCallback* aError)
--  : mAudio(aAudio)
-+		       bool aAudio, bool aVideo, bool aPicture,
-+		       MediaManager* aManager,
-+		       nsIDOMGetUserMediaSuccessCallback* aSuccess,
-+		       nsIDOMGetUserMediaErrorCallback* aError)
-+  : mWindow(aWindow)
-+  , mAudio(aAudio)
-   , mVideo(aVideo)
-   , mPicture(aPicture)
-   , mManager(aManager)
-   , mSuccess(aSuccess)
--  , mError(aError)
--  {
--    mWindow = new DOMWindowHolder(aWindow);
-+  , mError(aError) {}
-+
-+  ~GetUserMediaRunnable() {
-+    if (!NS_IsMainThread()) {
-+      nsIDOMWindow* window;
-+      mWindow.forget(&window);
-+
-+      if (mWindow) {
-+	nsCOMPtr<nsIThread> mainThread;
-+	NS_GetMainThread(getter_AddRefs(mainThread));
-+	NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
-+	if (mainThread) {
-+	  NS_ProxyRelease(mainThread, static_cast<nsIDOMWindow*>(window));
-+	}
-+      }
-+    }
-   }
- 
-   // We only support 1 audio and 1 video track for now
-   enum {
-     kVideoTrack = 1,
-     kAudioTrack = 2
-   };
- 
-   NS_IMETHOD
-   Run()
-   {
--
-     if (mPicture) {
-       SendPicture();
-       return NS_OK;
-     }
- 
-     // Implement merging two streams (See bug 758391).
-     if (mAudio && mVideo) {
-       NS_DispatchToMainThread(new ErrorCallbackRunnable(
-@@ -399,36 +396,36 @@ private:
-   bool mAudio;
-   bool mVideo;
-   bool mPicture;
- 
-   MediaManager* mManager;
- 
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
--  nsRefPtr<DOMWindowHolder> mWindow;
-+  nsCOMPtr<nsIDOMWindow> mWindow;
- };
- 
- 
- MediaManager* MediaManager::mSingleton;
- 
- MediaEngine*
- MediaManager::GetBackend()
- {
-   if (!mBackend) {
-     mBackend = new MediaEngineDefault();
-   }
-   return mBackend;
- }
- 
- nsresult
- MediaManager::GetUserMedia(nsIDOMWindow* aWindow,
--  nsIMediaStreamOptions *aParams,
--  nsIDOMGetUserMediaSuccessCallback* onSuccess,
--  nsIDOMGetUserMediaErrorCallback* onError)
-+			   nsIMediaStreamOptions *aParams,
-+			   nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+			   nsIDOMGetUserMediaErrorCallback* onError)
- {
-   NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
- 
-   bool audio, video, picture;
-   nsresult rv = aParams->GetPicture(&picture);
-   NS_ENSURE_SUCCESS(rv, rv);
- 
-   rv = aParams->GetAudio(&audio);

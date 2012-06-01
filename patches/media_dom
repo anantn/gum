@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 32e175d0565a6189e0723fe0506193e04fed9f87
+# Parent 41b7a4793495eba3e6f7cfe1c5f75f3827457421
 # User Anant Narayanan <anant@kix.in>
 # User Doug Turner <dougt@dougt.org>
 DOM bindings for gUM
@@ -316,7 +316,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.cpp
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,455 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -332,33 +332,11 @@ new file mode 100644
 +#include "nsJSUtils.h"
 +#include "nsDOMFile.h"
 +#include "nsContentUtils.h"
++#include "nsProxyRelease.h"
 +
 +namespace mozilla {
 +namespace dom {
 +namespace media {
-+
-+class DOMWindowHolder : public nsISupports
-+{
-+public:
-+  DOMWindowHolder(nsIDOMWindow* aWindow)
-+    : mWindow(aWindow) {}
-+
-+  ~DOMWindowHolder() {}
-+
-+  NS_DECL_ISUPPORTS
-+
-+  nsIDOMWindow*
-+  GetDOMWindow()
-+  {
-+    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-+    return mWindow;
-+  }
-+private:
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-+};
-+
-+NS_IMPL_THREADSAFE_ISUPPORTS0(DOMWindowHolder)
-+
 +
 +class ErrorCallbackRunnable : public nsRunnable {
 +public:
@@ -381,23 +359,26 @@ new file mode 100644
 +
 +class SuccessCallbackRunnable : public nsRunnable {
 +public:
-+  SuccessCallbackRunnable(DOMWindowHolder* aWindow,
++  SuccessCallbackRunnable(nsCOMPtr<nsIDOMWindow>& aWindow,
 +    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMFile* aFile)
-+    : mWindow(aWindow)
-+    , mSuccess(aSuccess)
-+    , mFile(aFile) {}
++    : mSuccess(aSuccess)
++    , mFile(aFile)
++  {
++    mWindow.swap(aWindow);
++  }
 +
-+  SuccessCallbackRunnable(DOMWindowHolder* aWindow,
++  SuccessCallbackRunnable(nsCOMPtr<nsIDOMWindow>& aWindow,
 +    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMMediaStream *aStream)
-+    : mWindow(aWindow)
-+    , mSuccess(aSuccess)
-+    , mStream(aStream) {}
++    : mSuccess(aSuccess)
++    , mStream(aStream)
++  {
++    mWindow.swap(aWindow);
++  }
 +
 +  JSContext*
 +  contextForWindow()
 +  {
-+    nsCOMPtr<nsIDOMWindow> window = mWindow->GetDOMWindow();
-+    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(window);
++    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mWindow);
 +    if (!sgo) {
 +      return nsnull;
 +    }
@@ -457,7 +438,7 @@ new file mode 100644
 +  }
 +
 +private:
-+  nsRefPtr<DOMWindowHolder> mWindow;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMFile> mFile;
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
@@ -469,16 +450,17 @@ new file mode 100644
 + */
 +class GetUserMediaCallbackRunnable : public nsRunnable {
 +public:
-+  GetUserMediaCallbackRunnable(DOMWindowHolder *aWindow,
-+    MediaEngineSource *aSource, TrackID aId,
-+    nsIDOMGetUserMediaSuccessCallback *aSuccess,
-+    nsIDOMGetUserMediaErrorCallback *aError)
-+    : mWindow(aWindow)
-+    , mSource(aSource)
++  GetUserMediaCallbackRunnable(nsCOMPtr<nsIDOMWindow>&aWindow,
++			       MediaEngineSource *aSource, TrackID aId,
++			       nsIDOMGetUserMediaSuccessCallback *aSuccess,
++			       nsIDOMGetUserMediaErrorCallback *aError)
++    : mSource(aSource)
 +    , mId(aId)
 +    , mSuccess(aSuccess)
-+    , mError(aError) {}
-+
++    , mError(aError)
++  {
++    mWindow.swap(aWindow);
++  }
 +
 +  /**
 +   * This inner class is an implementation of MediaStreamListener
@@ -548,7 +530,7 @@ new file mode 100644
 +  }
 +
 +private:
-+  nsRefPtr<DOMWindowHolder> mWindow;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<MediaEngineSource> mSource;
 +  TrackID mId;
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
@@ -557,16 +539,18 @@ new file mode 100644
 +
 +class GetUserMediaSnapshotCallbackRunable : public nsRunnable {
 +public:
-+  GetUserMediaSnapshotCallbackRunable(DOMWindowHolder *aWindow,
-+    MediaEngineSource *aSource,
-+    PRUint32 aDuration,
-+    nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
-+    nsIDOMGetUserMediaErrorCallback *aErrorCallback)
-+    : mWindow(aWindow)
-+    , mSource(aSource)
++  GetUserMediaSnapshotCallbackRunable(nsCOMPtr<nsIDOMWindow>& aWindow,
++				      MediaEngineSource *aSource,
++				      PRUint32 aDuration,
++				      nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
++				      nsIDOMGetUserMediaErrorCallback *aErrorCallback)
++    : mSource(aSource)
 +    , mDuration(aDuration)
 +    , mSuccessCallback(aSuccessCallback)
-+    , mErrorCallback(aErrorCallback) {}
++    , mErrorCallback(aErrorCallback)
++  {
++    mWindow.swap(aWindow);
++  }
 +
 +  NS_IMETHOD
 +  Run()
@@ -589,7 +573,7 @@ new file mode 100644
 +  }
 +
 +private:
-+  nsRefPtr<DOMWindowHolder> mWindow;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<MediaEngineSource> mSource;
 +  PRUint32 mDuration;
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccessCallback;
@@ -605,18 +589,32 @@ new file mode 100644
 +class GetUserMediaRunnable : public nsRunnable {
 +public:
 +  GetUserMediaRunnable(nsIDOMWindow* aWindow,
-+    bool aAudio, bool aVideo, bool aPicture,
-+    MediaManager* aManager,
-+    nsIDOMGetUserMediaSuccessCallback* aSuccess,
-+    nsIDOMGetUserMediaErrorCallback* aError)
-+  : mAudio(aAudio)
++		       bool aAudio, bool aVideo, bool aPicture,
++		       MediaManager* aManager,
++		       nsIDOMGetUserMediaSuccessCallback* aSuccess,
++		       nsIDOMGetUserMediaErrorCallback* aError)
++  : mWindow(aWindow)
++  , mAudio(aAudio)
 +  , mVideo(aVideo)
 +  , mPicture(aPicture)
 +  , mManager(aManager)
 +  , mSuccess(aSuccess)
-+  , mError(aError)
-+  {
-+    mWindow = new DOMWindowHolder(aWindow);
++  , mError(aError) {}
++
++  ~GetUserMediaRunnable() {
++    if (!NS_IsMainThread()) {
++      nsIDOMWindow* window;
++      mWindow.forget(&window);
++
++      if (mWindow) {
++	nsCOMPtr<nsIThread> mainThread;
++	NS_GetMainThread(getter_AddRefs(mainThread));
++	NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
++	if (mainThread) {
++	  NS_ProxyRelease(mainThread, static_cast<nsIDOMWindow*>(window));
++	}
++      }
++    }
 +  }
 +
 +  // We only support 1 audio and 1 video track for now
@@ -628,7 +626,6 @@ new file mode 100644
 +  NS_IMETHOD
 +  Run()
 +  {
-+
 +    if (mPicture) {
 +      SendPicture();
 +      return NS_OK;
@@ -723,7 +720,7 @@ new file mode 100644
 +
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
-+  nsRefPtr<DOMWindowHolder> mWindow;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +};
 +
 +
@@ -740,9 +737,9 @@ new file mode 100644
 +
 +nsresult
 +MediaManager::GetUserMedia(nsIDOMWindow* aWindow,
-+  nsIMediaStreamOptions *aParams,
-+  nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+  nsIDOMGetUserMediaErrorCallback* onError)
++			   nsIMediaStreamOptions *aParams,
++			   nsIDOMGetUserMediaSuccessCallback* onSuccess,
++			   nsIDOMGetUserMediaErrorCallback* onError)
 +{
 +  NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
 +
