@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent e1fb06666ab3b1bbc1f53e0c3a72cef36ca206a6
+# Parent 32e175d0565a6189e0723fe0506193e04fed9f87
 # User Anant Narayanan <anant@kix.in>
 # User Doug Turner <dougt@dougt.org>
 DOM bindings for gUM
@@ -131,7 +131,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  #endif
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
  #ifdef MOZ_B2G_BT
-@@ -895,16 +897,42 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+@@ -895,16 +897,38 @@ NS_IMETHODIMP Navigator::GetGeolocation(
      return NS_ERROR_FAILURE;
    }
  
@@ -152,17 +152,13 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +    return NS_OK;
 +  }
 +
-+  // Should pass a window reference to MediaManager::Init() eventually
-+  if (!mMediaManager) {
-+    mMediaManager = new media::MediaManager();
-+  }
-+
-+  nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
++  media::MediaManager *manager = media::MediaManager::Get();
++  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
 +
 +  if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
 +    return NS_ERROR_FAILURE;
 +  }
-+  return mMediaManager->GetUserMedia(win->GetOuterWindow(), aParams, onSuccess, onError);
++  return manager->GetUserMedia(win->GetOuterWindow(), aParams, onSuccess, onError);
 +}
 +
 +//*****************************************************************************
@@ -195,22 +191,7 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #include "nsIDOMNavigatorNetwork.h"
  #include "nsAutoPtr.h"
  #include "nsWeakReference.h"
-@@ -44,27 +45,32 @@ namespace dom {
- namespace battery {
- class BatteryManager;
- } // namespace battery
- 
- namespace sms {
- class SmsManager;
- } // namespace sms
- 
-+namespace media {
-+class MediaManager;
-+} // namespace media
-+
- namespace network {
- class Connection;
- class MobileConnection;
+@@ -55,16 +56,17 @@ class MobileConnection;
  } // namespace Connection;
  
  namespace power {
@@ -228,7 +209,7 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #ifdef MOZ_B2G_RIL
                  , public nsIDOMNavigatorTelephony
  #endif
-@@ -77,16 +83,17 @@ public:
+@@ -77,16 +79,17 @@ public:
    Navigator(nsPIDOMWindow *aInnerWindow);
    virtual ~Navigator();
  
@@ -246,24 +227,6 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
  #endif
    NS_DECL_NSIDOMMOZNAVIGATORNETWORK
  
-@@ -116,16 +123,17 @@ private:
- 
-   nsRefPtr<nsMimeTypeArray> mMimeTypes;
-   nsRefPtr<nsPluginArray> mPlugins;
-   nsRefPtr<nsGeolocation> mGeolocation;
-   nsRefPtr<nsDesktopNotificationCenter> mNotification;
-   nsRefPtr<battery::BatteryManager> mBatteryManager;
-   nsRefPtr<power::PowerManager> mPowerManager;
-   nsRefPtr<sms::SmsManager> mSmsManager;
-+  nsRefPtr<media::MediaManager> mMediaManager;
- #ifdef MOZ_B2G_RIL
-   nsCOMPtr<nsIDOMTelephony> mTelephony;
- #endif
-   nsRefPtr<network::Connection> mConnection;
-   nsRefPtr<network::MobileConnection> mMobileConnection;
- #ifdef MOZ_B2G_BT
-   nsCOMPtr<nsIDOMBluetoothManager> mBluetooth;
- #endif
 diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 --- a/dom/base/nsDOMClassInfo.cpp
 +++ b/dom/base/nsDOMClassInfo.cpp
@@ -309,7 +272,7 @@ diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/Makefile.in
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,39 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +# You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -336,6 +299,9 @@ new file mode 100644
 +  nsIDOMNavigatorUserMedia.idl \
 +  $(NULL)
 +
++#EXPORTS_NAMESPACE = mozilla/dom
++
++#EXPORTS_mozilla/dom = \
 +EXPORTS = \
 +  MediaManager.h \
 +  $(NULL)
@@ -350,7 +316,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.cpp
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,458 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -449,7 +415,7 @@ new file mode 100644
 +    if (aFile == nsnull) {
 +      return JSVAL_NULL;
 +    }
-+    
++
 +    nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(aFile);
 +
 +    JSContext* cx = contextForWindow();
@@ -466,7 +432,7 @@ new file mode 100644
 +    if (aStream == nsnull) {
 +      return JSVAL_NULL;
 +    }
-+    
++
 +    JSContext* cx = contextForWindow();
 +
 +    jsval wrapped;
@@ -664,7 +630,8 @@ new file mode 100644
 +  {
 +
 +    if (mPicture) {
-+      return SendPicture();
++      SendPicture();
++      return NS_OK;
 +    }
 +
 +    // Implement merging two streams (See bug 758391).
@@ -676,17 +643,19 @@ new file mode 100644
 +    }
 +
 +    if (mVideo) {
-+      return SendVideo(); 
++      SendVideo();
++      return NS_OK;
 +    }
 +
 +    if (mAudio) {
-+      return SendAudio(); 
++      SendAudio();
++      return NS_OK;
 +    }
 +
 +    return NS_ERROR_FAILURE;
 +  }
 +
-+  NS_IMETHOD
++  void
 +  SendPicture()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
@@ -698,16 +667,14 @@ new file mode 100644
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
 +      ));
-+      return NS_OK;
 +    }
 +    MediaEngineVideoSource* videoSource = videoSources[count - 1];
 +    NS_DispatchToMainThread(new GetUserMediaSnapshotCallbackRunable(
 +      mWindow, videoSource, 0 /* duration */, mSuccess, mError
 +    ));
-+    return NS_OK;
 +  }
-+    
-+  NS_IMETHOD
++
++  void
 +  SendVideo()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
@@ -719,17 +686,15 @@ new file mode 100644
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
 +      ));
-+      return NS_OK;
 +    }
 +
 +    MediaEngineVideoSource* videoSource = videoSources[count - 1];
 +    NS_DispatchToMainThread(new GetUserMediaCallbackRunnable(
 +      mWindow, videoSource, kVideoTrack, mSuccess, mError
 +    ));
-+    return NS_OK;
 +  }
-+    
-+  NS_IMETHOD
++
++  void
 +  SendAudio()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
@@ -741,14 +706,12 @@ new file mode 100644
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
 +      ));
-+      return NS_OK;
 +    }
 +
 +    MediaEngineAudioSource* audioSource = audioSources[count - 1];
 +    NS_DispatchToMainThread(new GetUserMediaCallbackRunnable(
 +      mWindow, audioSource, kAudioTrack, mSuccess, mError
 +    ));
-+    return NS_OK;
 +  }
 +
 +private:
@@ -756,7 +719,7 @@ new file mode 100644
 +  bool mVideo;
 +  bool mPicture;
 +
-+  nsRefPtr<MediaManager> mManager;
++  MediaManager* mManager;
 +
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
@@ -764,7 +727,7 @@ new file mode 100644
 +};
 +
 +
-+NS_IMPL_THREADSAFE_ISUPPORTS0(MediaManager)
++MediaManager* MediaManager::mSingleton;
 +
 +MediaEngine*
 +MediaManager::GetBackend()
@@ -782,7 +745,7 @@ new file mode 100644
 +  nsIDOMGetUserMediaErrorCallback* onError)
 +{
 +  NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
-+  
++
 +  bool audio, video, picture;
 +  nsresult rv = aParams->GetPicture(&picture);
 +  NS_ENSURE_SUCCESS(rv, rv);
@@ -797,7 +760,7 @@ new file mode 100644
 +  nsString cameraType;
 +  rv = aParams->GetCamera(cameraType);
 +  NS_ENSURE_SUCCESS(rv, rv);
-+  
++
 +  nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(
 +    aWindow, audio, video, picture, this, onSuccess, onError
 +  );
@@ -816,7 +779,7 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.h
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,40 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -829,12 +792,14 @@ new file mode 100644
 +namespace dom {
 +namespace media {
 +
-+class MediaManager : public nsISupports {
++class MediaManager {
 +public:
-+  MediaManager() : mBackend(nsnull) {};
-+  ~MediaManager() { delete mBackend; };
-+
-+  NS_DECL_ISUPPORTS
++  static MediaManager* Get() {
++    if (!mSingleton) {
++      mSingleton = new MediaManager();
++    }
++    return mSingleton;
++  }
 +
 +  MediaEngine* GetBackend();
 +  nsresult GetUserMedia(nsIDOMWindow* aWindow,
@@ -843,7 +808,13 @@ new file mode 100644
 +			nsIDOMGetUserMediaErrorCallback* onError);
 +
 +private:
++  MediaManager() : mBackend(nsnull) {};
++  MediaManager(MediaManager const&) {};
++
++  ~MediaManager() { delete mBackend; };
++
 +  MediaEngine* mBackend;
++  static MediaManager* mSingleton;
 +};
 +
 +}
