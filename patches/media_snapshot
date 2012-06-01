@@ -2,11 +2,6 @@
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
-<<<<<<< Updated upstream
-# Parent 6bb78db624452353e8c394dee33116acd4fd2a4a
-=======
-# Parent 5b8814f39e93d56bfd43a30da39a72a920928d0b
->>>>>>> Stashed changes
 try: -b do -p all -u all -t all
 
 diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
@@ -118,46 +113,3 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
    VideoSegment segment;
  
    nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
-diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
---- a/dom/base/Navigator.cpp
-+++ b/dom/base/Navigator.cpp
-@@ -909,17 +909,17 @@ NS_IMETHODIMP
- Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
-                            nsIDOMGetUserMediaSuccessCallback* onSuccess,
-                            nsIDOMGetUserMediaErrorCallback* onError)
- {
-   if (!Preferences::GetBool("media.enabled", false)) {
-     return NS_OK;
-   }
- 
--  media::MediaManager *manager = media::MediaManager::Get();
-+  media::MediaManager *manager =   media::MediaManager::Get();
-   nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
- 
-   if (!win || !win->GetOuterWindow() || !win->GetDocShell()) {
-     return NS_ERROR_FAILURE;
-   }
-   return manager->GetUserMedia(win->GetOuterWindow(), aParams, onSuccess, onError);
- }
- 
-diff --git a/dom/dom-config.mk b/dom/dom-config.mk
---- a/dom/dom-config.mk
-+++ b/dom/dom-config.mk
-@@ -1,16 +1,17 @@
- # This Source Code Form is subject to the terms of the Mozilla Public
- # License, v. 2.0. If a copy of the MPL was not distributed with this
- # file, You can obtain one at http://mozilla.org/MPL/2.0/.
- 
- DOM_SRCDIRS = \
-   dom/base \
-   dom/battery \
-   dom/power \
-+  dom/media \
-   dom/network/src \
-   dom/settings \
-   dom/sms/src \
-   dom/contacts \
-   dom/src/events \
-   dom/src/storage \
-   dom/src/offline \
-   dom/src/geolocation \

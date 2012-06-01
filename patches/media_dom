@@ -906,3 +906,24 @@ diff --git a/mobile/android/installer/package-manifest.in b/mobile/android/insta
  @BINPATH@/components/dom_json.xpt
  @BINPATH@/components/dom_range.xpt
  @BINPATH@/components/dom_sidebar.xpt
+diff --git a/dom/dom-config.mk b/dom/dom-config.mk
+--- a/dom/dom-config.mk
++++ b/dom/dom-config.mk
+@@ -1,16 +1,17 @@
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ DOM_SRCDIRS = \
+   dom/base \
+   dom/battery \
+   dom/power \
++  dom/media \
+   dom/network/src \
+   dom/settings \
+   dom/sms/src \
+   dom/contacts \
+   dom/src/events \
+   dom/src/storage \
+   dom/src/offline \
+   dom/src/geolocation \
