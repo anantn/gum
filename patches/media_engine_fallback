@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 32e4d686ff9d460ef9a39eeb24ff7ff74ffe1655
+# Parent c6fe1246523fc8af610ba0e94b7c05e0238729b6
 # User Anant Narayanan <anant@kix.in>
 Implement fallback media engine
 
@@ -115,12 +115,12 @@ new file mode 100644
 +MediaEngineDefaultVideoSource::Start(SourceMediaStream* aStream, TrackID aID)
 +{
 +  if (mState != kAllocated) {
-+    return NULL;
++    return NS_ERROR_FAILURE;
 +  }
 +
 +  mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
 +  if (!mTimer) {
-+    return NULL;
++    return NS_ERROR_FAILURE;
 +  }
 +
 +  mSource = aStream;
