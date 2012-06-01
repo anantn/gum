@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 0cc234cde88f17b8664f2b2e91784f987ebaed64
+# Parent e1fb06666ab3b1bbc1f53e0c3a72cef36ca206a6
 # User Anant Narayanan <anant@kix.in>
 # User Doug Turner <dougt@dougt.org>
 DOM bindings for gUM
@@ -350,7 +350,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.cpp
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,461 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -360,10 +360,12 @@ new file mode 100644
 +#include "MediaStreamGraph.h"
 +#include "MediaEngineDefault.h"
 +
++#include "nsIDOMFile.h"
++#include "nsIScriptGlobalObject.h"
++
 +#include "nsJSUtils.h"
 +#include "nsDOMFile.h"
 +#include "nsContentUtils.h"
-+#include "nsIScriptGlobalObject.h"
 +
 +namespace mozilla {
 +namespace dom {
@@ -414,7 +416,7 @@ new file mode 100644
 +class SuccessCallbackRunnable : public nsRunnable {
 +public:
 +  SuccessCallbackRunnable(DOMWindowHolder* aWindow,
-+    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsILocalFile* aFile)
++    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMFile* aFile)
 +    : mWindow(aWindow)
 +    , mSuccess(aSuccess)
 +    , mFile(aFile) {}
@@ -442,22 +444,19 @@ new file mode 100644
 +  }
 +
 +  jsval
-+  nsIFileToJsval(nsILocalFile* aFile)
++  nsIFileToJsval(nsIDOMFile* aFile)
 +  {
 +    if (aFile == nsnull) {
 +      return JSVAL_NULL;
 +    }
 +    
-+    nsCOMPtr<nsIDOMBlob> blob = new nsDOMFileFile(aFile);
++    nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(aFile);
 +
 +    JSContext* cx = contextForWindow();
 +
 +    jsval wrapped;
-+    nsContentUtils::WrapNative(cx,
-+             JS_GetGlobalObject(cx),
-+             blob,
-+             &NS_GET_IID(nsIDOMFile),
-+             &wrapped);
++    nsContentUtils::WrapNative(cx, JS_GetGlobalObject(cx), blob,
++      &NS_GET_IID(nsIDOMFile), &wrapped);
 +    return wrapped;
 +  }
 +
@@ -471,11 +470,8 @@ new file mode 100644
 +    JSContext* cx = contextForWindow();
 +
 +    jsval wrapped;
-+    nsContentUtils::WrapNative(cx,
-+             JS_GetGlobalObject(cx),
-+             aStream,
-+             &NS_GET_IID(nsIDOMMediaStream),
-+             &wrapped);
++    nsContentUtils::WrapNative(cx, JS_GetGlobalObject(cx), aStream,
++      &NS_GET_IID(nsIDOMMediaStream), &wrapped);
 +    return wrapped;
 +  }
 +
@@ -497,7 +493,7 @@ new file mode 100644
 +private:
 +  nsRefPtr<DOMWindowHolder> mWindow;
 +  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-+  nsCOMPtr<nsILocalFile> mFile;
++  nsCOMPtr<nsIDOMFile> mFile;
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
 +};
 +
@@ -617,7 +613,7 @@ new file mode 100644
 +      return NS_ERROR_FAILURE;
 +    }
 +
-+    nsCOMPtr<nsILocalFile> file;
++    nsCOMPtr<nsIDOMFile> file;
 +    mSource->Snapshot(mDuration, getter_AddRefs(file));
 +
 +    NS_DispatchToMainThread(new SuccessCallbackRunnable(
@@ -912,7 +908,7 @@ diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
  	$(DEPTH)/dom/power/$(LIB_PREFIX)dom_power_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/settings/$(LIB_PREFIX)jsdomsettings_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/network/src/$(LIB_PREFIX)dom_network_s.$(LIB_SUFFIX) \
-+	$(DEPTH)/dom/media/src/$(LIB_PREFIX)dom_media_s.$(LIB_SUFFIX) \
++	$(DEPTH)/dom/media/$(LIB_PREFIX)dom_media_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/sms/src/$(LIB_PREFIX)dom_sms_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/events/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
  	$(DEPTH)/dom/src/json/$(LIB_PREFIX)json_s.$(LIB_SUFFIX) \

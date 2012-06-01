@@ -2,24 +2,25 @@
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
-# Parent a1190b56217b383d7fae7cf3748b7291f289682d
+# Parent 4e21ab3c6a0a58f432a9fd3f7172e26a14506541
 try: -b do -p all -u all -t all
 
 diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
 --- a/content/media/MediaEngineDefault.cpp
 +++ b/content/media/MediaEngineDefault.cpp
-@@ -1,14 +1,19 @@
+@@ -1,13 +1,19 @@
  /* This Source Code Form is subject to the terms of the Mozilla Public
   * License, v. 2.0. If a copy of the MPL was not distributed with this file,
   * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  #include "MediaEngineDefault.h"
- 
++#include "nsDOMFile.h"
++
 +#ifdef ANDROID
 +#include "AndroidBridge.h"
 +#include "nsISupportsUtils.h"
 +#endif
-+
+ 
  #define WIDTH 320
  #define HEIGHT 240
  #define FPS 10
@@ -27,22 +28,24 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  #define RATE USECS_PER_S
  
  namespace mozilla {
- 
-@@ -144,16 +149,24 @@ MediaEngineDefaultVideoSource::Stop()
+@@ -144,16 +150,27 @@ MediaEngineDefaultVideoSource::Stop()
  
    mState = kStopped;
    return NS_OK;
  }
  
  nsresult
- MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsILocalFile** aFile)
+ MediaEngineDefaultVideoSource::Snapshot(PRUint32 aDuration, nsIDOMFile** aFile)
  {
 +#ifdef ANDROID
-+   nsAutoString filePath;
-+   if (mozilla::AndroidBridge::Bridge()) {
-+     mozilla::AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
-+     nsresult rv = NS_NewLocalFile(filePath, false, aFile);
-+     return rv;
++  nsAutoString filePath;
++  nsCOMPtr<nsILocalFile> localFile;
++  if (mozilla::AndroidBridge::Bridge()) {
++    mozilla::AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
++    nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(localFile));
++    NS_ENSURE_SUCCESS(rv,rv);
++    *aFile = new nsDOMFileFile(localFile);
++    return rv;
 +  }
 +#endif
     *aFile = nsnull;

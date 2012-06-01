@@ -28,7 +28,7 @@ diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 new file mode 100644
 --- /dev/null
 +++ b/content/media/MediaEngine.h
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,113 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,6 +36,7 @@ new file mode 100644
 +#ifndef MEDIAENGINE_H_
 +#define MEDIAENGINE_H_
 +
++#include "nsIDOMFile.h"
 +#include "nsDOMMediaStream.h"
 +#include "MediaStreamGraph.h"
 +
@@ -94,7 +95,7 @@ new file mode 100644
 +   * image, and for audio, it is a snippet lasting aDuration milliseconds. The
 +   * duration argument is ignored for a MediaEngineVideoSource.
 +   */
-+  virtual nsresult Snapshot(PRUint32 aDuration, nsILocalFile** aFile) = 0;
++  virtual nsresult Snapshot(PRUint32 aDuration, nsIDOMFile** aFile) = 0;
 +
 +  /* Stop the device and release the corresponding MediaStream */
 +  virtual nsresult Stop() = 0;
