@@ -3,7 +3,7 @@
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
 # Parent a1190b56217b383d7fae7cf3748b7291f289682d
-[mq]: media_engine_api_change
+try: -b do -p all -u all -t all
 
 diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDefault.cpp
 --- a/content/media/MediaEngineDefault.cpp
@@ -53,3 +53,29 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
  {
    VideoSegment segment;
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -905,19 +905,22 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+ //    Navigator::nsIDOMNavigatorUserMedia (mozGetUserMedia)
+ //*****************************************************************************
+ 
+ NS_IMETHODIMP
+ Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
+                            nsIDOMGetUserMediaSuccessCallback* onSuccess,
+                            nsIDOMGetUserMediaErrorCallback* onError)
+ {
++
++#ifndef ANDROID
+   if (!Preferences::GetBool("media.enabled", false)) {
+     return NS_OK;
+   }
++#endif
+ 
+   // Should pass a window reference to MediaManager::Init() eventually
+   if (!mMediaManager) {
+     mMediaManager = new media::MediaManager();
+   }
+ 
+   nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
+ 
