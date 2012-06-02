@@ -334,7 +334,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +                           nsIDOMGetUserMediaSuccessCallback* onSuccess,
 +                           nsIDOMGetUserMediaErrorCallback* onError)
 +{
-+  if (!Preferences::GetBool("media.enabled", false)) {
++  if (!Preferences::GetBool("media.navigator.enabled", false)) {
 +    return NS_OK;
 +  }
 +
