@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 201950397f3a31bec093c8293374b8c4a77d672e
+# Parent c3931132b7418824e3b2e8b420d7c1da89361d41
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
@@ -117,7 +117,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
    VideoSegment segment;
  
    nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
-@@ -191,17 +216,17 @@ MediaEngineDefaultAudioSource::Allocate(
+@@ -191,27 +216,27 @@ MediaEngineDefaultAudioSource::Allocate(
    }
    mState = kAllocated;
    return nsDOMMediaStream::CreateInputStream();
@@ -136,25 +136,33 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  
  nsresult
  MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
-diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
---- a/dom/media/MediaManager.cpp
-+++ b/dom/media/MediaManager.cpp
-@@ -242,16 +242,18 @@ public:
-         mErrorCallback, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")
-       ));
-       return NS_ERROR_FAILURE;
-     }
- 
-     nsCOMPtr<nsIDOMFile> file;
-     mSource->Snapshot(mDuration, getter_AddRefs(file));
- 
-+    mSource->Deallocate();
-+
-     NS_DispatchToMainThread(new SuccessCallbackRunnable(
-       mWindow, mSuccessCallback, file
-     ));
-     return NS_OK;
+ {
+-  if (mState != kAllocated) {
++  if (mState != kStarted && mState != kAllocated) {
+     return NULL;
    }
  
- private:
-   nsCOMPtr<nsIDOMWindow> mWindow;
+   mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
+   if (!mTimer) {
+     return NULL;
+   }
+ 
+@@ -222,17 +247,17 @@ MediaEngineDefaultAudioSource::Start(Sou
+   segment->Init(CHANNELS);
+   mSource->AddTrack(aID, RATE, 0, segment);
+ 
+   // We aren't going to add any more tracks
+   mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+ 
+   // Remember TrackID so we can finish later
+   mTrackID = aID;
+-  
++
+   // 1 Audio frame per Video frame
+   mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
+   mState = kStarted;
+ 
+   return NS_OK;
+ }
+ 
+ nsresult

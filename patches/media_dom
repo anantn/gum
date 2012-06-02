@@ -1,13 +1,30 @@
 # HG changeset patch
-# Parent 41b7a4793495eba3e6f7cfe1c5f75f3827457421
+# Parent 7bbbbe6951823e2bb6ce76ba4a1127aa9c77567d
 # User Anant Narayanan <anant@kix.in>
-# User Doug Turner <dougt@dougt.org>
 DOM bindings for gUM
 
 diff --git a/b2g/installer/package-manifest.in b/b2g/installer/package-manifest.in
 --- a/b2g/installer/package-manifest.in
 +++ b/b2g/installer/package-manifest.in
-@@ -162,16 +162,17 @@
+@@ -137,17 +137,16 @@
+ @BINPATH@/components/commandhandler.xpt
+ @BINPATH@/components/commandlines.xpt
+ @BINPATH@/components/composer.xpt
+ @BINPATH@/components/content_base.xpt
+ @BINPATH@/components/content_events.xpt
+ @BINPATH@/components/content_canvas.xpt
+ @BINPATH@/components/content_htmldoc.xpt
+ @BINPATH@/components/content_html.xpt
+-@BINPATH@/components/content_media.xpt
+ @BINPATH@/components/content_xslt.xpt
+ @BINPATH@/components/content_xtf.xpt
+ @BINPATH@/components/cookie.xpt
+ @BINPATH@/components/directory.xpt
+ @BINPATH@/components/docshell.xpt
+ @BINPATH@/components/dom.xpt
+ @BINPATH@/components/dom_apps.xpt
+ @BINPATH@/components/dom_base.xpt
+@@ -162,16 +161,17 @@
  #endif
  @BINPATH@/components/dom_canvas.xpt
  @BINPATH@/components/dom_contacts.xpt
@@ -28,7 +45,40 @@ diff --git a/b2g/installer/package-manifest.in b/b2g/installer/package-manifest.
 diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
 --- a/browser/installer/package-manifest.in
 +++ b/browser/installer/package-manifest.in
-@@ -167,16 +167,17 @@
+@@ -1,13 +1,13 @@
+ ; This Source Code Form is subject to the terms of the Mozilla Public
+ ; License, v. 2.0. If a copy of the MPL was not distributed with this
+ ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+-; Package file for the Firefox build. 
++; Package file for the Firefox build.
+ ;
+ ; Packaging manifest is used to copy files from dist/bin
+ ; to the staging directory.
+ ; Some other files are built in the staging directory directly,
+ ; so they will be implicitly packaged too.
+ ;
+ ; File format:
+ ;
+@@ -142,17 +142,16 @@
+ @BINPATH@/components/commandhandler.xpt
+ @BINPATH@/components/commandlines.xpt
+ @BINPATH@/components/composer.xpt
+ @BINPATH@/components/content_base.xpt
+ @BINPATH@/components/content_events.xpt
+ @BINPATH@/components/content_canvas.xpt
+ @BINPATH@/components/content_htmldoc.xpt
+ @BINPATH@/components/content_html.xpt
+-@BINPATH@/components/content_media.xpt
+ @BINPATH@/components/content_xslt.xpt
+ @BINPATH@/components/content_xtf.xpt
+ @BINPATH@/components/cookie.xpt
+ @BINPATH@/components/directory.xpt
+ @BINPATH@/components/docshell.xpt
+ @BINPATH@/components/dom.xpt
+ @BINPATH@/components/dom_apps.xpt
+ @BINPATH@/components/dom_base.xpt
+@@ -167,16 +166,17 @@
  #endif
  @BINPATH@/components/dom_canvas.xpt
  @BINPATH@/components/dom_contacts.xpt
@@ -268,6 +318,27 @@ diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozNavigatorSms)
  #ifdef MOZ_B2G_RIL
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorTelephony)
+diff --git a/dom/dom-config.mk b/dom/dom-config.mk
+--- a/dom/dom-config.mk
++++ b/dom/dom-config.mk
+@@ -1,16 +1,17 @@
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ DOM_SRCDIRS = \
+   dom/base \
+   dom/battery \
+   dom/power \
++  dom/media \
+   dom/network/src \
+   dom/settings \
+   dom/sms/src \
+   dom/contacts \
+   dom/src/events \
+   dom/src/storage \
+   dom/src/offline \
+   dom/src/geolocation \
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -316,7 +387,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.cpp
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,454 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -334,11 +405,18 @@ new file mode 100644
 +#include "nsContentUtils.h"
 +#include "nsProxyRelease.h"
 +
++#include "stdio.h"
++
 +namespace mozilla {
 +namespace dom {
 +namespace media {
 +
-+class ErrorCallbackRunnable : public nsRunnable {
++/**
++ * Send an error back to content. The error is the form a string.
++ * Do this only on the main thread.
++ */
++class ErrorCallbackRunnable : public nsRunnable
++{
 +public:
 +  ErrorCallbackRunnable(nsIDOMGetUserMediaErrorCallback *aError,
 +    const nsString& aErrorMsg)
@@ -353,11 +431,18 @@ new file mode 100644
 +  }
 +
 +private:
-+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 +  const nsString mErrorMsg;
++  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 +};
 +
-+class SuccessCallbackRunnable : public nsRunnable {
++/**
++ * Invoke the "onSuccess" callback in content. The callback will take a
++ * DOMBlob in the case of {picture:true}, and a MediaStream in the case of
++ * {audio:true} or {video:true}. There is a constructor available for each
++ * form. Do this only on the main thread.
++ */
++class SuccessCallbackRunnable : public nsRunnable
++{
 +public:
 +  SuccessCallbackRunnable(nsCOMPtr<nsIDOMWindow>& aWindow,
 +    nsIDOMGetUserMediaSuccessCallback *aSuccess, nsIDOMFile* aFile)
@@ -375,85 +460,39 @@ new file mode 100644
 +    mWindow.swap(aWindow);
 +  }
 +
-+  JSContext*
-+  contextForWindow()
-+  {
-+    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mWindow);
-+    if (!sgo) {
-+      return nsnull;
-+    }
-+    nsIScriptContext *scriptContext = sgo->GetScriptContext();
-+    if (!scriptContext) {
-+      return nsnull;
-+    }
-+    JSContext *cx = scriptContext->GetNativeContext();
-+    return cx;
-+  }
-+
-+  jsval
-+  nsIFileToJsval(nsIDOMFile* aFile)
-+  {
-+    if (aFile == nsnull) {
-+      return JSVAL_NULL;
-+    }
-+
-+    nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(aFile);
-+
-+    JSContext* cx = contextForWindow();
-+
-+    jsval wrapped;
-+    nsContentUtils::WrapNative(cx, JS_GetGlobalObject(cx), blob,
-+      &NS_GET_IID(nsIDOMFile), &wrapped);
-+    return wrapped;
-+  }
-+
-+  jsval
-+  streamToJsval(nsIDOMMediaStream* aStream)
-+  {
-+    if (aStream == nsnull) {
-+      return JSVAL_NULL;
-+    }
-+
-+    JSContext* cx = contextForWindow();
-+
-+    jsval wrapped;
-+    nsContentUtils::WrapNative(cx, JS_GetGlobalObject(cx), aStream,
-+      &NS_GET_IID(nsIDOMMediaStream), &wrapped);
-+    return wrapped;
-+  }
-+
 +  NS_IMETHOD
 +  Run()
 +  {
 +    jsval result = JSVAL_NULL;
 +
++    // XPConnect is a magical unicorn.
 +    if (mFile) {
-+      result = nsIFileToJsval(mFile);
++      mSuccess->OnSuccess(mFile);
 +    } else if (mStream) {
-+      result = streamToJsval(mStream);
++      mSuccess->OnSuccess(mStream);
 +    }
 +
-+    mSuccess->OnSuccess(result);
 +    return NS_OK;
 +  }
 +
 +private:
-+  nsCOMPtr<nsIDOMWindow> mWindow;
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMFile> mFile;
++  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<nsIDOMMediaStream> mStream;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +};
 +
 +/**
 + * This runnable creates a nsDOMMediaStream from a given MediaEngineSource
 + * and returns it via a success callback. Both must be done on the main thread.
 + */
-+class GetUserMediaCallbackRunnable : public nsRunnable {
++class GetUserMediaCallbackRunnable : public nsRunnable
++{
 +public:
 +  GetUserMediaCallbackRunnable(nsCOMPtr<nsIDOMWindow>&aWindow,
-+			       MediaEngineSource *aSource, TrackID aId,
-+			       nsIDOMGetUserMediaSuccessCallback *aSuccess,
-+			       nsIDOMGetUserMediaErrorCallback *aError)
++    MediaEngineSource *aSource, TrackID aId,
++    nsIDOMGetUserMediaSuccessCallback *aSuccess,
++    nsIDOMGetUserMediaErrorCallback *aError)
 +    : mSource(aSource)
 +    , mId(aId)
 +    , mSuccess(aSuccess)
@@ -463,9 +502,12 @@ new file mode 100644
 +  }
 +
 +  /**
-+   * This inner class is an implementation of MediaStreamListener
++   * This inner class is an implementation of MediaStreamListener. This is used
++   * to Start() and Stop() the underlying MediaEngineSource when MediaStreams
++   * are assigned and deassigned in content.
 +   */
-+  class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener {
++  class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener
++  {
 +  public:
 +    GetUserMediaCallbackMediaStreamListener(MediaEngineSource *aSource,
 +      nsDOMMediaStream *aStream, TrackID aListenId)
@@ -473,18 +515,21 @@ new file mode 100644
 +      , mStream(aStream)
 +      , mId(aListenId) {}
 +
++    // XXX: This callback does not seem to be called when the window is closed.
++    // If that is expected behavior (bug 759908), we should stop and
++    // deallocate the source when the window is destroyed ourselves.
 +    void
 +    NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming)
 +    {
 +      if (aConsuming == CONSUMED) {
-+        nsDOMMediaStream* stream = mStream.get();
-+        nsRefPtr<SourceMediaStream> sStream = stream->GetStream()->AsSourceStream();
-+        mSource->Start(sStream.get(), mId);
++        nsRefPtr<SourceMediaStream> stream = mStream->GetStream()->AsSourceStream();
++        mSource->Start(stream, mId);
 +        return;
 +      }
 +
 +      // NOT_CONSUMED
 +      mSource->Stop();
++      mSource->Deallocate();
 +      return;
 +    }
 +
@@ -496,54 +541,64 @@ new file mode 100644
 +      PRUint32 aTrackEvents, const MediaSegment& aQueuedMedia) {}
 +
 +  private:
-+    nsCOMPtr<MediaEngineSource> mSource;
-+    nsCOMPtr<nsDOMMediaStream> mStream;
 +    TrackID mId;
++    nsCOMPtr<nsDOMMediaStream> mStream;
++    nsCOMPtr<MediaEngineSource> mSource;
 +  };
 +
 +  NS_IMETHOD
 +  Run()
 +  {
-+    // Normally we would now get the name & UUID for the device and ask the
-+    // user permission. We will do that when we have some UI.
-+    nsCOMPtr<nsDOMMediaStream> mComStream = mSource->Allocate();
-+    if (mComStream == nsnull) {
++    /**
++     * Normally we would now get the name & UUID for the device and ask the
++     * user permission. We will do that when we have some UI. Currently,
++     * only the Android {picture:true} backend is functional, which does not
++     * need a permission prompt, as permission is implicit by user action.
++     *
++     * See bug 748835 for progress on the desktop UI.
++     */
++    nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
++    if (!comStream) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")
 +      ));
 +      return NS_ERROR_FAILURE;
 +    }
 +
-+    // Add our listener. We'll call Start() on the source when get a bcallback
++    // Add our listener. We'll call Start() on the source when get a callback
 +    // that the MediaStream has started consuming.
-+    nsDOMMediaStream* stream = mComStream.get();
-+    MediaStream* mediaStream = stream->GetStream();
-+
-+    nsRefPtr<GetUserMediaCallbackMediaStreamListener> listener = 
-+      new GetUserMediaCallbackMediaStreamListener(mSource, mComStream, mId);
++    MediaStream* mediaStream = comStream->GetStream();
++    nsRefPtr<GetUserMediaCallbackMediaStreamListener> listener =
++      new GetUserMediaCallbackMediaStreamListener(mSource, comStream, mId);
 +    mediaStream->AddListener(listener);
 +
 +    NS_DispatchToMainThread(new SuccessCallbackRunnable(
-+      mWindow, mSuccess, stream
++      mWindow, mSuccess, comStream.get()
 +    ));
 +    return NS_OK;
 +  }
 +
 +private:
++  TrackID mId;
 +  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<MediaEngineSource> mSource;
-+  TrackID mId;
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +};
 +
-+class GetUserMediaSnapshotCallbackRunable : public nsRunnable {
++/**
++ * This runnable creates a nsIDOMFile from a MediaEngineVideoSource and
++ * passes the result back via a SuccessRunnable. Both must be done on the
++ * main thread.
++ */
++class GetUserMediaSnapshotCallbackRunable : public nsRunnable
++{
 +public:
 +  GetUserMediaSnapshotCallbackRunable(nsCOMPtr<nsIDOMWindow>& aWindow,
-+				      MediaEngineSource *aSource,
-+				      PRUint32 aDuration,
-+				      nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
-+				      nsIDOMGetUserMediaErrorCallback *aErrorCallback)
++    MediaEngineSource *aSource,
++    PRUint32 aDuration,
++    nsIDOMGetUserMediaSuccessCallback *aSuccessCallback,
++    nsIDOMGetUserMediaErrorCallback *aErrorCallback)
 +    : mSource(aSource)
 +    , mDuration(aDuration)
 +    , mSuccessCallback(aSuccessCallback)
@@ -556,7 +611,7 @@ new file mode 100644
 +  Run()
 +  {
 +    nsCOMPtr<nsDOMMediaStream> comStream = mSource->Allocate();
-+    if (comStream == nsnull) {
++    if (!comStream) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mErrorCallback, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")
 +      ));
@@ -565,6 +620,7 @@ new file mode 100644
 +
 +    nsCOMPtr<nsIDOMFile> file;
 +    mSource->Snapshot(mDuration, getter_AddRefs(file));
++    mSource->Deallocate();
 +
 +    NS_DispatchToMainThread(new SuccessCallbackRunnable(
 +      mWindow, mSuccessCallback, file
@@ -573,11 +629,11 @@ new file mode 100644
 +  }
 +
 +private:
++  PRUint32 mDuration;
 +  nsCOMPtr<nsIDOMWindow> mWindow;
 +  nsCOMPtr<MediaEngineSource> mSource;
-+  PRUint32 mDuration;
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccessCallback;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback>  mErrorCallback;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccessCallback;
 +};
 +
 +/**
@@ -585,39 +641,46 @@ new file mode 100644
 + * Depending on whether a picture or stream was asked for, either
 + * GetUserMediaCallbackRunnable or GetUserMediaSnapshotCallbackRunnable
 + * will be dispatched to the main thread to return the result to DOM.
++ *
++ * Do not run this on the main thread.
 + */
-+class GetUserMediaRunnable : public nsRunnable {
++class GetUserMediaRunnable : public nsRunnable
++{
 +public:
 +  GetUserMediaRunnable(nsIDOMWindow* aWindow,
-+		       bool aAudio, bool aVideo, bool aPicture,
-+		       MediaManager* aManager,
-+		       nsIDOMGetUserMediaSuccessCallback* aSuccess,
-+		       nsIDOMGetUserMediaErrorCallback* aError)
-+  : mWindow(aWindow)
-+  , mAudio(aAudio)
-+  , mVideo(aVideo)
-+  , mPicture(aPicture)
-+  , mManager(aManager)
-+  , mSuccess(aSuccess)
-+  , mError(aError) {}
++    bool aAudio, bool aVideo, bool aPicture,
++    MediaManager* aManager,
++    nsIDOMGetUserMediaSuccessCallback* aSuccess,
++    nsIDOMGetUserMediaErrorCallback* aError)
++    : mWindow(aWindow)
++    , mAudio(aAudio)
++    , mVideo(aVideo)
++    , mPicture(aPicture)
++    , mManager(aManager)
++    , mSuccess(aSuccess)
++    , mError(aError) {}
 +
 +  ~GetUserMediaRunnable() {
-+    if (!NS_IsMainThread()) {
-+      nsIDOMWindow* window;
-+      mWindow.forget(&window);
++    if (NS_IsMainThread()) {
++      return;
++    }
 +
-+      if (mWindow) {
-+	nsCOMPtr<nsIThread> mainThread;
-+	NS_GetMainThread(getter_AddRefs(mainThread));
-+	NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
-+	if (mainThread) {
-+	  NS_ProxyRelease(mainThread, static_cast<nsIDOMWindow*>(window));
-+	}
-+      }
++    nsIDOMWindow* window;
++    mWindow.forget(&window);
++
++    if (!mWindow) {
++      return;
++    }
++
++    nsCOMPtr<nsIThread> mainThread;
++    NS_GetMainThread(getter_AddRefs(mainThread));
++    NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
++    if (mainThread) {
++      NS_ProxyRelease(mainThread, static_cast<nsIDOMWindow*>(window));
 +    }
 +  }
 +
-+  // We only support 1 audio and 1 video track for now
++  // We only support 1 audio and 1 video track for now.
 +  enum {
 +    kVideoTrack = 1,
 +    kAudioTrack = 2
@@ -631,7 +694,7 @@ new file mode 100644
 +      return NS_OK;
 +    }
 +
-+    // Implement merging two streams (See bug 758391).
++    // XXX: Implement merging two streams (See bug 758391).
 +    if (mAudio && mVideo) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NOT_IMPLEMENTED")
@@ -652,14 +715,14 @@ new file mode 100644
 +    return NS_ERROR_FAILURE;
 +  }
 +
++  // {picture:true}
 +  void
 +  SendPicture()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
-+    MediaEngine* mBackend = mManager->GetBackend();
-+    mBackend->EnumerateVideoDevices(&videoSources);
++    mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
 +
-+    PRInt32 count = videoSources.Length();
++    PRUint32 count = videoSources.Length();
 +    if (!count) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
@@ -671,14 +734,14 @@ new file mode 100644
 +    ));
 +  }
 +
++  // {video:true}
 +  void
 +  SendVideo()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
-+    MediaEngine* mBackend = mManager->GetBackend();
-+    mBackend->EnumerateVideoDevices(&videoSources);
++    mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
 +
-+    PRInt32 count = videoSources.Length();
++    PRUint32 count = videoSources.Length();
 +    if (!count) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
@@ -691,14 +754,14 @@ new file mode 100644
 +    ));
 +  }
 +
++  // {audio:true}
 +  void
 +  SendAudio()
 +  {
 +    nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
-+    MediaEngine* mBackend = mManager->GetBackend();
-+    mBackend->EnumerateAudioDevices(&audioSources);
++    mManager->GetBackend()->EnumerateAudioDevices(&audioSources);
 +
-+    PRInt32 count = audioSources.Length();
++    PRUint32 count = audioSources.Length();
 +    if (!count) {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("NO_DEVICES_FOUND")
@@ -718,23 +781,19 @@ new file mode 100644
 +
 +  MediaManager* mManager;
 +
-+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 +  nsCOMPtr<nsIDOMWindow> mWindow;
++  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
 +};
 +
 +
 +MediaManager* MediaManager::mSingleton;
 +
-+MediaEngine*
-+MediaManager::GetBackend()
-+{
-+  if (!mBackend) {
-+    mBackend = new MediaEngineDefault();
-+  }
-+  return mBackend;
-+}
-+
++/**
++ * The entry point for this file. A call from Navigator::mozGetUserMedia
++ * will end up here. MediaManager is a singleton that is responsible
++ * for handling all incoming getUserMedia calls from every window.
++ */
 +nsresult
 +MediaManager::GetUserMedia(nsIDOMWindow* aWindow,
 +			   nsIMediaStreamOptions *aParams,
@@ -769,14 +828,25 @@ new file mode 100644
 +  return NS_OK;
 +}
 +
++MediaEngine*
++MediaManager::GetBackend()
++{
++  // Plugin backends as appropriate. Only default is available for now, which
++  // also includes picture support for Android.
++  if (!mBackend) {
++    mBackend = new MediaEngineDefault();
++  }
++  return mBackend;
 +}
-+}
-+}
++
++} // namespace mozilla
++} // namespace dom
++} // namespace media
 diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 new file mode 100644
 --- /dev/null
 +++ b/dom/media/MediaManager.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,41 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -800,11 +870,12 @@ new file mode 100644
 +
 +  MediaEngine* GetBackend();
 +  nsresult GetUserMedia(nsIDOMWindow* aWindow,
-+			nsIMediaStreamOptions *aParams,
-+			nsIDOMGetUserMediaSuccessCallback* onSuccess,
-+			nsIDOMGetUserMediaErrorCallback* onError);
++    nsIMediaStreamOptions *aParams,
++    nsIDOMGetUserMediaSuccessCallback* onSuccess,
++    nsIDOMGetUserMediaErrorCallback* onError);
 +
 +private:
++  // Make private because we want only one instance of this class
 +  MediaManager() : mBackend(nsnull) {};
 +  MediaManager(MediaManager const&) {};
 +
@@ -814,9 +885,9 @@ new file mode 100644
 +  static MediaManager* mSingleton;
 +};
 +
-+}
-+}
-+}
++} // namespace mozilla
++} // namespace dom
++} // namespace media
 diff --git a/content/media/nsIDOMMediaStream.idl b/dom/media/nsIDOMMediaStream.idl
 rename from content/media/nsIDOMMediaStream.idl
 rename to dom/media/nsIDOMMediaStream.idl
@@ -835,11 +906,11 @@ new file mode 100644
 +[scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
 +interface nsIDOMGetUserMediaSuccessCallback : nsISupports
 +{
-+  /* 
++  /*
 +   * value must be a nsIDOMBlob if picture is true and a
 +   * nsIDOMMediaStream if either audio or video are true.
 +   */
-+  void onSuccess(in jsval value);
++  void onSuccess(in nsISupports value);
 +};
 +
 +[scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
@@ -888,7 +959,22 @@ diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
 diff --git a/mobile/android/installer/package-manifest.in b/mobile/android/installer/package-manifest.in
 --- a/mobile/android/installer/package-manifest.in
 +++ b/mobile/android/installer/package-manifest.in
-@@ -158,16 +158,17 @@
+@@ -143,31 +143,31 @@
+ @BINPATH@/components/commandhandler.xpt
+ @BINPATH@/components/commandlines.xpt
+ @BINPATH@/components/composer.xpt
+ @BINPATH@/components/content_base.xpt
+ @BINPATH@/components/content_events.xpt
+ @BINPATH@/components/content_canvas.xpt
+ @BINPATH@/components/content_htmldoc.xpt
+ @BINPATH@/components/content_html.xpt
+-@BINPATH@/components/content_media.xpt
+ @BINPATH@/components/content_xslt.xpt
+ @BINPATH@/components/content_xtf.xpt
+ @BINPATH@/components/cookie.xpt
+ @BINPATH@/components/directory.xpt
+ @BINPATH@/components/docshell.xpt
+ @BINPATH@/components/dom.xpt
  @BINPATH@/components/dom_apps.xpt
  @BINPATH@/components/dom_base.xpt
  @BINPATH@/components/dom_battery.xpt
@@ -906,24 +992,39 @@ diff --git a/mobile/android/installer/package-manifest.in b/mobile/android/insta
  @BINPATH@/components/dom_json.xpt
  @BINPATH@/components/dom_range.xpt
  @BINPATH@/components/dom_sidebar.xpt
-diff --git a/dom/dom-config.mk b/dom/dom-config.mk
---- a/dom/dom-config.mk
-+++ b/dom/dom-config.mk
-@@ -1,16 +1,17 @@
- # This Source Code Form is subject to the terms of the Mozilla Public
- # License, v. 2.0. If a copy of the MPL was not distributed with this
- # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+diff --git a/mobile/xul/installer/package-manifest.in b/mobile/xul/installer/package-manifest.in
+--- a/mobile/xul/installer/package-manifest.in
++++ b/mobile/xul/installer/package-manifest.in
+@@ -1,13 +1,13 @@
+ ; This Source Code Form is subject to the terms of the Mozilla Public
+ ; License, v. 2.0. If a copy of the MPL was not distributed with this
+ ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
  
- DOM_SRCDIRS = \
-   dom/base \
-   dom/battery \
-   dom/power \
-+  dom/media \
-   dom/network/src \
-   dom/settings \
-   dom/sms/src \
-   dom/contacts \
-   dom/src/events \
-   dom/src/storage \
-   dom/src/offline \
-   dom/src/geolocation \
+-; Package file for the Fennec build. 
++; Package file for the Fennec build.
+ ;
+ ; File format:
+ ;
+ ; [] designates a toplevel component. Example: [xpcom]
+ ; - in front of a file specifies it to be removed from the destination
+ ; * wildcard support to recursively copy the entire directory
+ ; ; file comment
+ ;
+@@ -143,17 +143,16 @@
+ @BINPATH@/components/commandhandler.xpt
+ @BINPATH@/components/commandlines.xpt
+ @BINPATH@/components/composer.xpt
+ @BINPATH@/components/content_base.xpt
+ @BINPATH@/components/content_events.xpt
+ @BINPATH@/components/content_canvas.xpt
+ @BINPATH@/components/content_htmldoc.xpt
+ @BINPATH@/components/content_html.xpt
+-@BINPATH@/components/content_media.xpt
+ @BINPATH@/components/content_xslt.xpt
+ @BINPATH@/components/content_xtf.xpt
+ @BINPATH@/components/cookie.xpt
+ @BINPATH@/components/directory.xpt
+ @BINPATH@/components/docshell.xpt
+ @BINPATH@/components/dom.xpt
+ @BINPATH@/components/dom_base.xpt
+ #ifdef MOZ_B2G_RIL
