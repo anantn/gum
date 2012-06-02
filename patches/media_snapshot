@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent c3931132b7418824e3b2e8b420d7c1da89361d41
+# Parent 7c4d479ef79d6eb2f39716281c3c989ec00a576e
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
@@ -16,7 +16,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  #include "MediaEngineDefault.h"
 +#include "nsDOMFile.h"
 +
-+#ifdef ANDROID
++#ifdef MOZ_WIDGET_ANDROID
 +#include "AndroidBridge.h"
 +#include "nsISupportsUtils.h"
 +#endif
@@ -28,55 +28,6 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  #define RATE USECS_PER_S
  
  namespace mozilla {
-@@ -74,26 +80,26 @@ MediaEngineDefaultVideoSource::Start(Sou
-     return NS_ERROR_FAILURE;
-   }
- 
-   mSource = aStream;
- 
-   // Allocate a single blank Image
-   layers::Image::Format format = layers::Image::PLANAR_YCBCR;
-   mImageContainer = layers::LayerManager::CreateImageContainer();
--    
-+
-   nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&format, 1);
--  
-+
-   int len = ((WIDTH * HEIGHT) * 3 / 2);
-   mImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
-   PRUint8* frame = (PRUint8*) PR_Malloc(len);
-   memset(frame, 0x80, len); // Gray
- 
-   const PRUint8 lumaBpp = 8;
--  const PRUint8 chromaBpp = 4; 
-+  const PRUint8 chromaBpp = 4;
- 
-   layers::PlanarYCbCrImage::Data data;
-   data.mYChannel = frame;
-   data.mYSize = gfxIntSize(WIDTH, HEIGHT);
-   data.mYStride = WIDTH * lumaBpp / 8.0;
-   data.mCbCrStride = WIDTH * chromaBpp / 8.0;
-   data.mCbChannel = frame + HEIGHT * data.mYStride;
-   data.mCrChannel = data.mCbChannel + HEIGHT * data.mCbCrStride / 2;
-@@ -117,17 +123,17 @@ MediaEngineDefaultVideoSource::Start(Sou
-   mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
- 
-   // Remember TrackID so we can end it later
-   mTrackID = aID;
- 
-   // Start timer for subsequent frames
-   mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
-   mState = kStarted;
--  
-+
-   return NS_OK;
- }
- 
- nsresult
- MediaEngineDefaultVideoSource::Stop()
- {
-   if (mState != kStarted) {
-     return NS_ERROR_FAILURE;
 @@ -144,18 +150,37 @@ MediaEngineDefaultVideoSource::Stop()
  
    mState = kStopped;
@@ -147,22 +98,3 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
      return NULL;
    }
  
-@@ -222,17 +247,17 @@ MediaEngineDefaultAudioSource::Start(Sou
-   segment->Init(CHANNELS);
-   mSource->AddTrack(aID, RATE, 0, segment);
- 
-   // We aren't going to add any more tracks
-   mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
- 
-   // Remember TrackID so we can finish later
-   mTrackID = aID;
--  
-+
-   // 1 Audio frame per Video frame
-   mTimer->InitWithCallback(this, 1000 / FPS, nsITimer::TYPE_REPEATING_SLACK);
-   mState = kStarted;
- 
-   return NS_OK;
- }
- 
- nsresult
