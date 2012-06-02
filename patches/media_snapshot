@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 7c4d479ef79d6eb2f39716281c3c989ec00a576e
+# Parent 686e9deb26e4d2b8e5c68dd6bc96f3d70dca3c2e
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
@@ -68,33 +68,3 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
    VideoSegment segment;
  
    nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
-@@ -191,27 +216,27 @@ MediaEngineDefaultAudioSource::Allocate(
-   }
-   mState = kAllocated;
-   return nsDOMMediaStream::CreateInputStream();
- }
- 
- nsresult
- MediaEngineDefaultAudioSource::Deallocate()
- {
--  if (mState != kStopped && mState != kAllocated) {
-+  if (mState != kAllocated) {
-     return NS_ERROR_FAILURE;
-   }
-   mState = kReleased;
-   return NS_OK;
- }
- 
- nsresult
- MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
- {
--  if (mState != kAllocated) {
-+  if (mState != kStarted && mState != kAllocated) {
-     return NULL;
-   }
- 
-   mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
-   if (!mTimer) {
-     return NULL;
-   }
- 

@@ -96,6 +96,56 @@ diff --git a/browser/installer/package-manifest.in b/browser/installer/package-m
  @BINPATH@/components/dom_json.xpt
  @BINPATH@/components/dom_power.xpt
  @BINPATH@/components/dom_range.xpt
+diff --git a/configure.in b/configure.in
+--- a/configure.in
++++ b/configure.in
+@@ -4543,16 +4543,17 @@ MOZ_SPEEX_RESAMPLER=1
+ MOZ_CUBEB=
+ MOZ_VORBIS=
+ MOZ_TREMOR=
+ MOZ_WAVE=1
+ MOZ_MEDIA=
+ MOZ_OPUS=1
+ MOZ_WEBM=1
+ MOZ_MEDIA_PLUGINS=
++MOZ_MEDIA_NAVIGATOR=
+ MOZ_OMX_PLUGIN=
+ MOZ_VP8_ERROR_CONCEALMENT=
+ MOZ_VP8_ENCODER=
+ VPX_AS=
+ VPX_ASFLAGS=
+ VPX_AS_DASH_C_FLAG=
+ VPX_AS_CONVERSION=
+ VPX_ASM_SUFFIX=
+@@ -5634,16 +5635,28 @@ MOZ_ARG_ENABLE_BOOL(media-plugins,
+     MOZ_MEDIA_PLUGINS=1,
+     MOZ_MEDIA_PLUGINS=)
+ 
+ if test -n "$MOZ_MEDIA_PLUGINS"; then
+   AC_DEFINE(MOZ_MEDIA_PLUGINS)
+ fi
+ 
+ dnl ========================================================
++dnl = Enable getUserMedia support
++dnl ========================================================
++MOZ_ARG_ENABLE_BOOL(media-navigator,
++[  --enable-media-navigator  Enable support for getUserMedia],
++    MOZ_MEDIA_NAVIGATOR=1,
++    MOZ_MEDIA_NAVIGATOR=)
++
++if test -n "$MOZ_MEDIA_NAVIGATOR"; then
++  AC_DEFINE(MOZ_MEDIA_NAVIGATOR)
++fi
++
++dnl ========================================================
+ dnl = Enable building OMX media plugin (B2G)
+ dnl ========================================================
+ MOZ_ARG_ENABLE_BOOL(omx-plugin,
+ [  --enable-omx-plugin      Enable building OMX plugin (B2G)],
+     MOZ_OMX_PLUGIN=1,
+     MOZ_OMX_PLUGIN=)
+ 
+ if test -n "$MOZ_OMX_PLUGIN"; then
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
@@ -227,16 +277,8 @@ diff --git a/dom/Makefile.in b/dom/Makefile.in
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 --- a/dom/base/Navigator.cpp
 +++ b/dom/base/Navigator.cpp
-@@ -26,16 +26,17 @@
- #include "nsUnicharUtils.h"
- #include "mozilla/Preferences.h"
- #include "mozilla/Telemetry.h"
- #include "BatteryManager.h"
- #include "PowerManager.h"
- #include "nsIDOMWakeLock.h"
- #include "nsIPowerManagerService.h"
+@@ -33,16 +33,19 @@
  #include "SmsManager.h"
-+#include "MediaManager.h"
  #include "nsISmsService.h"
  #include "mozilla/Hal.h"
  #include "nsIWebNavigation.h"
@@ -244,26 +286,38 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  #include "Connection.h"
  #include "MobileConnection.h"
  
++#ifdef MOZ_MEDIA_NAVIGATOR
++#include "MediaManager.h"
++#endif
  #ifdef MOZ_B2G_RIL
-@@ -87,16 +88,17 @@ Navigator::~Navigator()
- }
+ #include "TelephonyFactory.h"
+ #endif
+ #ifdef MOZ_B2G_BT
+ #include "nsIDOMBluetoothManager.h"
+ #include "BluetoothManager.h"
+ #endif
  
- NS_INTERFACE_MAP_BEGIN(Navigator)
+@@ -90,16 +93,19 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNavigator)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
    NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDeviceStorage)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
-+  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
++#ifdef MOZ_MEDIA_NAVIGATOR
++  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
++#endif
  #ifdef MOZ_B2G_RIL
    NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
  #endif
    NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
  #ifdef MOZ_B2G_BT
-@@ -895,16 +897,38 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorBluetooth)
+ #endif
+   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Navigator)
+@@ -895,16 +901,39 @@ NS_IMETHODIMP Navigator::GetGeolocation(
      return NS_ERROR_FAILURE;
    }
  
@@ -274,7 +328,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  //*****************************************************************************
 +//    Navigator::nsIDOMNavigatorUserMedia (mozGetUserMedia)
 +//*****************************************************************************
-+
++#ifdef MOZ_MEDIA_NAVIGATOR
 +NS_IMETHODIMP
 +Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
 +                           nsIDOMGetUserMediaSuccessCallback* onSuccess,
@@ -292,6 +346,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +  }
 +  return manager->GetUserMedia(win->GetOuterWindow(), aParams, onSuccess, onError);
 +}
++#endif
 +
 +//*****************************************************************************
  //    Navigator::nsIDOMNavigatorDesktopNotification
@@ -305,43 +360,49 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
 --- a/dom/base/Navigator.h
 +++ b/dom/base/Navigator.h
-@@ -4,16 +4,17 @@
-  * License, v. 2.0. If a copy of the MPL was not distributed with this
-  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+@@ -20,16 +20,20 @@
  
- #ifndef mozilla_dom_Navigator_h
- #define mozilla_dom_Navigator_h
+ class nsPluginArray;
+ class nsMimeTypeArray;
+ class nsGeolocation;
+ class nsDesktopNotificationCenter;
+ class nsPIDOMWindow;
+ class nsIDOMMozConnection;
  
- #include "nsIDOMNavigator.h"
- #include "nsIDOMNavigatorGeolocation.h"
++#ifdef MOZ_MEDIA_NAVIGATOR
 +#include "nsIDOMNavigatorUserMedia.h"
- #include "nsIDOMNavigatorDeviceStorage.h"
- #include "nsIDOMNavigatorDesktopNotification.h"
- #include "nsIDOMClientInformation.h"
- #include "nsIDOMNavigatorBattery.h"
- #include "nsIDOMNavigatorSms.h"
- #include "nsIDOMNavigatorNetwork.h"
- #include "nsAutoPtr.h"
- #include "nsWeakReference.h"
-@@ -55,16 +56,17 @@ class MobileConnection;
- } // namespace Connection;
++#endif
++
+ #ifdef MOZ_B2G_RIL
+ #include "nsIDOMNavigatorTelephony.h"
+ class nsIDOMTelephony;
+ #endif
  
- namespace power {
- class PowerManager;
- } // namespace power
+ #ifdef MOZ_B2G_BT
+ #include "nsIDOMNavigatorBluetooth.h"
+ #endif
+@@ -60,36 +64,43 @@ class PowerManager;
  
  class Navigator : public nsIDOMNavigator
                  , public nsIDOMClientInformation
-+                , public nsIDOMNavigatorUserMedia
                  , public nsIDOMNavigatorDeviceStorage
                  , public nsIDOMNavigatorGeolocation
                  , public nsIDOMNavigatorDesktopNotification
                  , public nsIDOMMozNavigatorBattery
                  , public nsIDOMMozNavigatorSms
++#ifdef MOZ_MEDIA_NAVIGATOR
++                , public nsIDOMNavigatorUserMedia
++#endif
  #ifdef MOZ_B2G_RIL
                  , public nsIDOMNavigatorTelephony
  #endif
-@@ -77,16 +79,17 @@ public:
+                 , public nsIDOMMozNavigatorNetwork
+ #ifdef MOZ_B2G_BT
+                 , public nsIDOMNavigatorBluetooth
+ #endif
++
+ {
+ public:
    Navigator(nsPIDOMWindow *aInnerWindow);
    virtual ~Navigator();
  
@@ -350,15 +411,20 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
    NS_DECL_NSIDOMCLIENTINFORMATION
    NS_DECL_NSIDOMNAVIGATORDEVICESTORAGE
    NS_DECL_NSIDOMNAVIGATORGEOLOCATION
-+  NS_DECL_NSIDOMNAVIGATORUSERMEDIA
    NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
    NS_DECL_NSIDOMMOZNAVIGATORBATTERY
    NS_DECL_NSIDOMMOZNAVIGATORSMS
++#ifdef MOZ_MEDIA_NAVIGATOR
++  NS_DECL_NSIDOMNAVIGATORUSERMEDIA
++#endif
  #ifdef MOZ_B2G_RIL
    NS_DECL_NSIDOMNAVIGATORTELEPHONY
  #endif
    NS_DECL_NSIDOMMOZNAVIGATORNETWORK
  
+ #ifdef MOZ_B2G_BT
+   NS_DECL_NSIDOMNAVIGATORBLUETOOTH
+ #endif
 diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 --- a/dom/base/nsDOMClassInfo.cpp
 +++ b/dom/base/nsDOMClassInfo.cpp
