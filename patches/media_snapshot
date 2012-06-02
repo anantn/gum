@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent c9c330277403dc20e6b402b0667f7b7eb54f5f4f
+# Parent 201950397f3a31bec093c8293374b8c4a77d672e
 # User Doug Turner <dougt@dougt.org>
 # Date 1338485284 25200
 # Node ID 2f5066c1c57362bd5c6f68e68b77e130e373f0b8
@@ -77,7 +77,7 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
  {
    if (mState != kStarted) {
      return NS_ERROR_FAILURE;
-@@ -144,18 +150,35 @@ MediaEngineDefaultVideoSource::Stop()
+@@ -144,18 +150,37 @@ MediaEngineDefaultVideoSource::Stop()
  
    mState = kStopped;
    return NS_OK;
@@ -93,17 +93,19 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
 +#ifndef MOZ_WIDGET_ANDROID
 +  return NS_ERROR_NOT_IMPLEMENTED;
 +#else
-+  nsAutoString filePath;
-+  nsCOMPtr<nsILocalFile> localFile;
 +  if (!AndroidBridge::Bridge()) {
 +    return NS_ERROR_UNEXPECTED;
 +  }
-+  if (!AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"))) {
-+    return NS_ERROR_UNEXPECTED;
++
++  nsAutoString filePath;
++  AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
++
++  nsCOMPtr<nsILocalFile> localFile;
++  nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(localFile));
++  if (NS_FAILED(rv)) {
++    return rv;
 +  }
 +
-+  nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(localFile));
-+  NS_ENSURE_SUCCESS(rv,rv);
 +  NS_ADDREF(*aFile = new nsDOMFileFile(localFile));
 +  return NS_OK;
 +#endif
