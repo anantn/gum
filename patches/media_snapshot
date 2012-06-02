@@ -117,3 +117,44 @@ diff --git a/content/media/MediaEngineDefault.cpp b/content/media/MediaEngineDef
    VideoSegment segment;
  
    nsRefPtr<layers::PlanarYCbCrImage> image = mImage;
+@@ -191,17 +216,17 @@ MediaEngineDefaultAudioSource::Allocate(
+   }
+   mState = kAllocated;
+   return nsDOMMediaStream::CreateInputStream();
+ }
+ 
+ nsresult
+ MediaEngineDefaultAudioSource::Deallocate()
+ {
+-  if (mState != kStopped && mState != kAllocated) {
++  if (mState != kAllocated) {
+     return NS_ERROR_FAILURE;
+   }
+   mState = kReleased;
+   return NS_OK;
+ }
+ 
+ nsresult
+ MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -242,16 +242,18 @@ public:
+         mErrorCallback, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE")
+       ));
+       return NS_ERROR_FAILURE;
+     }
+ 
+     nsCOMPtr<nsIDOMFile> file;
+     mSource->Snapshot(mDuration, getter_AddRefs(file));
+ 
++    mSource->Deallocate();
++
+     NS_DispatchToMainThread(new SuccessCallbackRunnable(
+       mWindow, mSuccessCallback, file
+     ));
+     return NS_OK;
+   }
+ 
+ private:
+   nsCOMPtr<nsIDOMWindow> mWindow;
