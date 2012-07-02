@@ -1,0 +1,15 @@
+<html>
+<head>
+  <title>gum test</title>
+</head>
+<body>
+
+</body>
+<script>
+  window.navigator.mozGetUserMedia({picture:true}, function(file) {
+    alert("got file !" + file);
+  }, function(err) {
+    alert("errro! " + err);
+  });
+</script>
+</html>
