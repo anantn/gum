@@ -2,13 +2,18 @@
 # User Crypt <snandaku@cisco.com>
 # Date 1340152183 25200
 # Node ID 4e21996fc0f04223ef1339138b9fcf319d65f530
-# Parent 155f67c2c5789ca51d4edc49403199e9e8434e48
+# Parent d17fc82f43eda6e4489668da940f9226807c97fc
  Bug 691234 Webrtc Backend With Basic Snapshot Support and Cleanup
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
 +++ b/content/media/Makefile.in
-@@ -16,8 +16,6 @@
+@@ -11,18 +11,16 @@ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE = content
+ LIBRARY_NAME = gkconmedia_s
+ LIBXUL_LIBRARY = 1
+ 
  EXPORTS = \
    AudioSegment.h \
    FileBlockCache.h \
@@ -17,7 +22,17 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    MediaResource.h \
    MediaSegment.h \
    MediaStreamGraph.h \
-@@ -39,7 +37,6 @@
+   nsAudioAvailableEventManager.h \
+   nsBuiltinDecoder.h \
+   nsBuiltinDecoderStateMachine.h \
+   nsBuiltinDecoderReader.h \
+   nsDOMMediaStream.h \
+@@ -34,17 +32,16 @@ EXPORTS = \
+   VideoFrameContainer.h \
+   VideoUtils.h \
+   VideoSegment.h \
+   $(NULL)
+ 
  CPPSRCS = \
    AudioSegment.cpp \
    FileBlockCache.cpp \
@@ -25,7 +40,17 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
    MediaResource.cpp \
    MediaStreamGraph.cpp \
    nsAudioAvailableEventManager.cpp \
-@@ -87,6 +84,7 @@
+   nsBuiltinDecoder.cpp \
+   nsBuiltinDecoderStateMachine.cpp \
+   nsBuiltinDecoderReader.cpp \
+   nsDOMMediaStream.cpp \
+   nsMediaCache.cpp \
+@@ -82,16 +79,17 @@ endif
+ ifdef MOZ_GSTREAMER
+ PARALLEL_DIRS += gstreamer
+ endif
+ 
+ ifdef MOZ_MEDIA_PLUGINS
  PARALLEL_DIRS += plugins
  endif
  
@@ -33,6 +58,11 @@ diff --git a/content/media/Makefile.in b/content/media/Makefile.in
  TEST_DIRS += test
  
  FORCE_STATIC_LIB = 1
+ 
+ include $(topsrcdir)/config/config.mk
+ include $(topsrcdir)/ipc/chromium/chromium-config.mk
+ include $(topsrcdir)/config/rules.mk
+ 
 diff --git a/content/media/MediaEngine.h b/content/media/MediaEngine.h
 deleted file mode 100644
 --- a/content/media/MediaEngine.h
@@ -594,7 +624,7 @@ diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/Makefile.in
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,35 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -617,8 +647,10 @@ new file mode 100644
 +  $(NULL)
 +
 +CPPSRCS	= \
-+	MediaEngineWebRTC.cpp \
 +  MediaEngineDefault.cpp \
++  MediaEngineWebRTC.cpp \
++  MediaEngineWebRTCVideo.cpp \
++  MediaEngineWebRTCAudio.cpp \
 +	$(NULL)
 +
 +FORCE_STATIC_LIB = 1
@@ -685,7 +717,7 @@ new file mode 100644
 +  virtual void GetUUID(nsAString&) = 0;
 +
 +  /* This call reserves but does not start the device. */
-+  virtual already_AddRefed<nsDOMMediaStream> Allocate() = 0;
++  virtual nsresult Allocate() = 0;
 +
 +  /* Release the device back to the system. */
 +  virtual nsresult Deallocate() = 0;
@@ -750,7 +782,7 @@ diff --git a/content/media/webrtc/MediaEngineDefault.cpp b/content/media/webrtc/
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineDefault.cpp
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,315 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -792,15 +824,15 @@ new file mode 100644
 +  return;
 +}
 +
-+already_AddRefed<nsDOMMediaStream>
++nsresult
 +MediaEngineDefaultVideoSource::Allocate()
 +{
 +  if (mState != kReleased) {
-+    return NULL;
++    return NS_ERROR_FAILURE;
 +  }
 +
 +  mState = kAllocated;
-+  return nsDOMMediaStream::CreateInputStream();
++  return NS_OK;
 +}
 +
 +nsresult
@@ -962,14 +994,15 @@ new file mode 100644
 +  return;
 +}
 +
-+already_AddRefed<nsDOMMediaStream>
++nsresult
 +MediaEngineDefaultAudioSource::Allocate()
 +{
 +  if (mState != kReleased) {
-+    return NULL;
++    return NS_ERROR_FAILURE;
 +  }
++
 +  mState = kAllocated;
-+  return nsDOMMediaStream::CreateInputStream();
++  return NS_OK;
 +}
 +
 +nsresult
@@ -1185,6 +1218,169 @@ new file mode 100644
 +}
 +
 +#endif /* NSMEDIAENGINEDEFAULT_H_ */
+diff --git a/content/media/webrtc/MediaEngineWebRTC.cpp b/content/media/webrtc/MediaEngineWebRTC.cpp
+new file mode 100644
+--- /dev/null
++++ b/content/media/webrtc/MediaEngineWebRTC.cpp
+@@ -0,0 +1,158 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "MediaEngineWebRTC.h"
++
++namespace mozilla {
++
++// MediaEngine for WebRTC (Desktop)
++
++void
++MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources)
++{
++  int error = 0;
++  printf("\n EnumerateVideo Devices ");
++
++  //we can use it function locals .. no need to save it in the class
++  webrtc::ViEBase* ptrViEBase;
++  webrtc::ViECapture* ptrViECapture;
++
++  if(NULL == mVideoEngine)
++  {
++      mVideoEngine = webrtc::VideoEngine::Create();
++      if (NULL == mVideoEngine )
++ {
++         printf( "ERROR in VideoEngine::Create\n");
++        return;
++     }
++  }
++
++  // te should have VideoEngine Created here
++  ptrViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
++  if (NULL == ptrViEBase) {
++    return;
++  }
++
++
++  if( false == mVideoEngineInit)
++  {
++   error = ptrViEBase->Init();
++   if (-1 == error ) {
++      printf( "ERROR in VideoEngine::Init\n");
++      return;
++   }
++    mVideoEngineInit = true;
++  }
++
++  ptrViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
++  if (NULL == ptrViECapture ) {
++    printf("ERROR in ViECapture::GetInterface\n");
++    return;
++  }
++
++  int num = ptrViECapture->NumberOfCaptureDevices();
++  if (num <= 0) {
++    printf( "ERROR no video devices found\n");
++    return;
++  } else {
++    printf("GetUserMedia:: Found %d devices!\n", num);
++  }
++
++  for(int i=0; i < num; i++)
++  {
++    //let's create VideoSouce objects
++    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine , i);
++    aVSources->AppendElement( vSource );
++  }
++
++  // safe to release local interfaces on the engine
++   ptrViEBase->Release();
++   ptrViECapture->Release();
++
++  return;
++}
++
++void
++MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources)
++{
++  // Be sure to release these at the end of the function
++  // safety measure though
++  webrtc::VoEBase* ptrVoEBase = NULL;
++  webrtc::VoEHardware* ptrVoEHw = NULL;
++  int error = 0;
++
++  if(NULL == mVoiceEngine)
++  {
++    mVoiceEngine = webrtc::VoiceEngine::Create();
++    if(NULL == mVoiceEngine)
++    {
++ printf(" Unable to create voice engine ");
++ return;
++    }
++  }
++
++  // all interfaces pointers are ref-counted
++  // we should be good on mutiple calls to this function ..
++  ptrVoEBase = webrtc::VoEBase::GetInterface( mVoiceEngine );
++  if(NULL == ptrVoEBase)
++  {
++ printf(" VoEBase creation failed ");
++ return;
++  }
++
++  //Init the voice library for the common parts
++  if(false == mAudioEngineInit)
++  {
++ error = ptrVoEBase->Init();
++ if(-1 == error)
++ {
++   printf("\n Audio Engine Init Failed ");
++ }
++ mAudioEngineInit = true;
++  }
++
++  ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
++  if(NULL == ptrVoEHw)
++  {
++ printf("\n Unable to get Audio Hardware Interface ");
++    return;
++  }
++
++  //let's enumerate audio input devices
++  int nDevices = 0;
++  error = ptrVoEHw->GetNumOfRecordingDevices(nDevices);
++  printf("\n Number if devices is %d ",nDevices);
++  for(int i = 0; i < nDevices; i++)
++  {
++     char deviceName[128];
++   memset(deviceName, 0, 128);
++   char uniqueId[128];
++   memset(uniqueId, 0, 128);
++     ptrVoEHw->GetRecordingDeviceName(i, deviceName,  uniqueId );
++        nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(mVoiceEngine , i);
++ aSource->AddRef();
++   aASources->AppendElement( aSource );
++  }
++
++  // releasing them to re-set the reference count ...
++  ptrVoEHw->Release();
++  ptrVoEBase->Release();
++}
++
++
++void
++MediaEngineWebRTC::Shutdown()
++{
++
++  if(mVideoEngine)
++    webrtc::VideoEngine::Delete(mVideoEngine);
++
++  if(mVoiceEngine)
++   webrtc::VoiceEngine::Delete(mVoiceEngine);
++
++  mVideoEngine = NULL;
++  mVoiceEngine = NULL;
++}
++
++}
 diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/MediaEngineWebRTC.h
 new file mode 100644
 --- /dev/null
@@ -1404,7 +1600,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCAudio.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,250 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1414,371 +1610,6 @@ new file mode 100644
 +#define CHANNELS 1
 +
 +namespace mozilla {
-+
-+/**
-+ * Webrtc video source.
-+ */
-+NS_IMPL_THREADSAFE_ISUPPORTS0(MediaEngineWebRTCVideoSource)
-+
-+// Static variables to hold device names and UUIDs.
-+const unsigned int MediaEngineWebRTCVideoSource::KMaxDeviceNameLength = 128;
-+const unsigned int MediaEngineWebRTCVideoSource::KMaxUniqueIdLength = 256;
-+
-+// ViEExternalRenderer Callback.
-+int
-+MediaEngineWebRTCVideoSource::FrameSizeChange(
-+   unsigned int w, unsigned int h, unsigned int streams)
-+{
-+  mWidth = w;
-+  mHeight = h;
-+  return 0;
-+}
-+
-+// ViEExternalRenderer Callback. Process every incoming frame here.
-+int
-+MediaEngineWebRTCVideoSource::DeliverFrame(
-+   unsigned char* buffer, int size, uint32_t time_stamp, int64_t render_time)
-+{
-+  ReentrantMonitorAutoEnter enter(mMonitor);
-+
-+  if (mInSnapshotMode) {
-+    // Set the condition variable to false and notify Snapshot().
-+    PR_Lock(mSnapshotLock);
-+    mInSnapshotMode = false;
-+    PR_NotifyCondVar(mSnapshotCondVar);
-+    PR_Unlock(mSnapshotLock);
-+    return 0;
-+  }
-+
-+  // Check for proper state.
-+  if (mState != kStarted) {
-+    return 0;
-+  }
-+
-+  // Create a video frame and append it to the track.
-+  layers::Image::Format format = layers::Image::PLANAR_YCBCR;
-+  nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&format, 1);
-+
-+  layers::PlanarYCbCrImage* videoImage = static_cast<layers::PlanarYCbCrImage*>(image.get());
-+
-+  PRUint8* frame = static_cast<PRUint8*> (buffer);
-+  const PRUint8 lumaBpp = 8;
-+  const PRUint8 chromaBpp = 4;
-+
-+  layers::PlanarYCbCrImage::Data data;
-+  data.mYChannel = frame;
-+  data.mYSize = gfxIntSize(mWidth, mHeight);
-+  data.mYStride = mWidth * lumaBpp/ 8;
-+  data.mCbCrStride = mWidth * chromaBpp / 8;
-+  data.mCbChannel = frame + mHeight * data.mYStride;
-+  data.mCrChannel = data.mCbChannel + mHeight * data.mCbCrStride / 2;
-+  data.mCbCrSize = gfxIntSize(mWidth/ 2, mHeight/ 2);
-+  data.mPicX = 0;
-+  data.mPicY = 0;
-+  data.mPicSize = gfxIntSize(mWidth, mHeight);
-+  data.mStereoMode = layers::STEREO_MODE_MONO;
-+
-+  videoImage->SetData(data);
-+
-+  VideoSegment segment;
-+  segment.AppendFrame(image.forget(), 1, gfxIntSize(mWidth, mHeight));
-+  mSource->AppendToTrack(mTrackID, &(segment));
-+  return 0;
-+}
-+
-+void
-+MediaEngineWebRTCVideoSource::GetName(nsAString& aName)
-+{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+
-+  if (mInitDone) {
-+    mViECapture->GetCaptureDevice(
-+      mCapIndex, deviceName, KMaxDeviceNameLength, uniqueId, KMaxUniqueIdLength
-+    );
-+    aName.Assign(NS_ConvertASCIItoUTF16(deviceName));
-+  }
-+}
-+
-+void
-+MediaEngineWebRTCVideoSource::GetUUID(nsAString& aUUID)
-+{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+
-+  if (mInitDone) {
-+    mViECapture->GetCaptureDevice(
-+      mCapIndex, deviceName, KMaxDeviceNameLength, uniqueId, KMaxUniqueIdLength
-+    );
-+    aUUID.Assign(NS_ConvertASCIItoUTF16(uniqueId));
-+  }
-+}
-+
-+already_AddRefed<nsDOMMediaStream>
-+MediaEngineWebRTCVideoSource::Allocate()
-+{
-+  if (mState != kReleased) {
-+    return NULL;
-+  }
-+
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+
-+  mViECapture->GetCaptureDevice(
-+    mCapIndex, deviceName, KMaxDeviceNameLength, uniqueId, KMaxUniqueIdLength
-+  );
-+
-+  if (mViECapture->AllocateCaptureDevice(uniqueId, KMaxUniqueIdLength, mCapIndex) == 0) {
-+    mState = kAllocated;
-+    if (mViECapture->StartCapture(mCapIndex) == -1) {
-+      return NULL;
-+    }
-+    return nsDOMMediaStream::CreateInputStream();
-+  }
-+
-+  return NULL;
-+}
-+
-+nsresult
-+MediaEngineWebRTCVideoSource::Deallocate()
-+{
-+  if (mState != kStopped && mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mViECapture->StopCapture(mCapIndex);
-+  mViECapture->ReleaseCaptureDevice(mCapIndex);
-+  mState = kReleased;
-+  return NS_OK;
-+}
-+
-+MediaEngineVideoOptions
-+MediaEngineWebRTCVideoSource::GetOptions()
-+{
-+  MediaEngineVideoOptions aOpts;
-+  aOpts.mWidth = mWidth;
-+  aOpts.mHeight = mHeight;
-+  aOpts.mMaxFPS = mFps;
-+  aOpts.codecType = kVideoCodecI420;
-+  return aOpts;
-+}
-+
-+nsresult
-+MediaEngineWebRTCVideoSource::Start(SourceMediaStream* aStream, TrackID aID)
-+{
-+  int error = 0;
-+  if (!mInitDone || mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  if (!aStream) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  if (mState == kStarted) {
-+    return NS_OK;
-+  }
-+
-+  mSource = aStream;
-+  mTrackID = aID;
-+
-+  // Setup  a blank track.
-+  mImageContainer = layers::LayerManager::CreateImageContainer();
-+  mSource->AddTrack(aID, mFps, 0, new VideoSegment());
-+  mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
-+
-+  error = mViERender->AddRenderer(mCapIndex, webrtc::kVideoI420, (webrtc::ExternalRenderer*)this);
-+  if (error == -1) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  error = mViERender->StartRender(mCapIndex);
-+  if (error == -1) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mState = kStarted;
-+  return NS_OK;
-+}
-+
-+nsresult
-+MediaEngineWebRTCVideoSource::Stop()
-+{
-+  if (mState != kStarted) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mSource->EndTrack(mTrackID);
-+  mSource->Finish();
-+
-+  mViERender->StopRender(mCapIndex);
-+  mViERender->RemoveRenderer(mCapIndex);
-+
-+  mState = kStopped;
-+  return NS_OK;
-+}
-+
-+nsresult
-+MediaEngineWebRTCVideoSource::Snapshot(PRUint32 aDuration, nsIDOMFile** aFile)
-+{
-+  /**
-+   * To get a Snapshot we do the following:
-+   * - Set a condition variable (mInSnapshotMode) to true
-+   * - Attach the external renderer and start the camera
-+   * - Wait for the condition variable to change to false
-+   *
-+   * Starting the camera has the effect of invoking DeliverFrame() when
-+   * the first frame arrives from the camera. We only need one frame for
-+   * GetCaptureDeviceSnapshot to work, so we immediately set the condition
-+   * variable to false and notify this method.
-+   *
-+   * This causes the current thread to continue (PR_CondWaitVar will return),
-+   * at which point we can grab a snapshot, convert it to a file and
-+   * return from this function after cleaning up the temporary stream object
-+   * and caling Stop() on the media source.
-+   */
-+  *aFile = nsnull;
-+  if (!mInitDone || mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mSnapshotLock = PR_NewLock();
-+  mSnapshotCondVar = PR_NewCondVar(mSnapshotLock);
-+
-+  PR_Lock(mSnapshotLock);
-+  mInSnapshotMode = true;
-+  nsRefPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateInputStream();
-+
-+  // Start the rendering (equivalent to calling Start(), but without a track).
-+  int error = 0;
-+  if (!mInitDone || mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+  error = mViERender->AddRenderer(mCapIndex, webrtc::kVideoI420, (webrtc::ExternalRenderer*)this);
-+  if (error == -1) {
-+    return NS_ERROR_FAILURE;
-+  }
-+  error = mViERender->StartRender(mCapIndex);
-+  if (error == -1) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  // Wait for the condition variable, will be set in DeliverFrame.
-+  // We use a while loop, because even if PR_WaitCondVar returns, it's not
-+  // guaranteed that the condition variable changed.
-+  while (mInSnapshotMode) {
-+    PR_WaitCondVar(mSnapshotCondVar, PR_INTERVAL_NO_TIMEOUT);
-+  }
-+
-+  // If we get here, DeliverFrame received at least one frame.
-+  PR_Unlock(mSnapshotLock);
-+  PR_DestroyCondVar(mSnapshotCondVar);
-+  PR_DestroyLock(mSnapshotLock);
-+
-+  webrtc::ViEFile* vieFile = webrtc::ViEFile::GetInterface(mVideoEngine);
-+  if (!vieFile) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  // Create a temporary file and put the snapshot in it.
-+  nsCOMPtr<nsIFile> tmp;
-+  nsresult rv = NS_GetSpecialDirectory("TmpD", getter_AddRefs(tmp));
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  tmp->Append(NS_LITERAL_STRING("webrtc_snapshot.jpeg"));
-+  rv = tmp->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  nsString unicodePath;
-+  rv = tmp->GetPath(unicodePath);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  const char* path = NS_ConvertUTF16toUTF8(unicodePath).get();
-+  if (vieFile->GetCaptureDeviceSnapshot(mCapIndex, path) < 0) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  // Stop the camera.
-+  mViERender->StopRender(mCapIndex);
-+  mViERender->RemoveRenderer(mCapIndex);
-+
-+  NS_ADDREF(*aFile = new nsDOMFileFile(tmp));
-+
-+  return NS_OK;
-+}
-+
-+/**
-+ * Initialization and Shutdown functions for the video source, called by the
-+ * constructor and destructor respectively.
-+ */
-+
-+void
-+MediaEngineWebRTCVideoSource::Init()
-+{
-+  if (mVideoEngine == NULL) {
-+    return;
-+  }
-+
-+  mViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
-+  if (mViEBase == NULL) {
-+    return;
-+  }
-+
-+  // Get interfaces for capture, render for now
-+  mViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
-+  mViERender = webrtc::ViERender::GetInterface(mVideoEngine);
-+
-+  if (mViECapture == NULL || mViERender == NULL) {
-+    return;
-+  }
-+
-+  // Temporary logging
-+  mVideoEngine->SetTraceFilter(webrtc::kTraceAll);
-+  mVideoEngine->SetTraceFile("Vievideotrace.out");
-+
-+  mInitDone = true;
-+}
-+
-+void
-+MediaEngineWebRTCVideoSource::Shutdown()
-+{
-+  int error = 0;
-+  bool continueShutdown = false;
-+
-+  if (!mInitDone) {
-+    return;
-+  }
-+
-+  if (mState == kStarted) {
-+    error = mViERender->StopRender(mCapIndex);
-+    error = mViERender->RemoveRenderer(mCapIndex);
-+    continueShutdown = true;
-+  }
-+
-+  error = 0;
-+  if (mState == kAllocated || continueShutdown) {
-+    error = mViECapture->StopCapture(mCapIndex);
-+    error = mViECapture->ReleaseCaptureDevice(mCapIndex);
-+    continueShutdown = false;
-+  }
-+
-+  mViECapture->Release();
-+  mViERender->Release();
-+  mViEBase->Release();
-+  mState = kReleased;
-+  mInitDone = false;
-+}
-+
-+
 +
 +/**
 + * Webrtc audio source.
@@ -1998,7 +1829,7 @@ new file mode 100644
 +  static int16_t audio10ms[PLAYOUT_SAMPLE_LENGTH];
 +  int sample_length  =0;
 +  memset(audio10ms, 0, PLAYOUT_SAMPLE_LENGTH * sizeof(short));
-+  mVoEXmedia->ExternalPlayoutGetData(audio10ms, PLAYOUT_SAMPLE_FREQUENCY, 100, sample_length); 
++  mVoEXmedia->ExternalPlayoutGetData(audio10ms, PLAYOUT_SAMPLE_FREQUENCY, 100, sample_length);
 +  if(sample_length == 0)
 +  {
 + return NS_OK;
@@ -2017,154 +1848,6 @@ new file mode 100644
 +  mAudioSegment.AppendFrames(buffer.forget(), sample_length, 0, sample_length, nsAudioStream::FORMAT_S16_LE);
 +  mSource->AppendToTrack(mTrackID, &mAudioSegment);
 +  return NS_OK;
-+}
-+
-+//XXX: Not multi-threded and non-renterant -???
-+void
-+MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources)
-+{
-+  int error = 0;
-+  printf("\n EnumerateVideo Devices ");
-+
-+  //we can use it function locals .. no need to save it in the class
-+  webrtc::ViEBase* ptrViEBase;
-+  webrtc::ViECapture* ptrViECapture;
-+
-+  if(NULL == mVideoEngine)
-+  {
-+      mVideoEngine = webrtc::VideoEngine::Create();
-+      if (NULL == mVideoEngine )
-+ {
-+         printf( "ERROR in VideoEngine::Create\n");
-+        return;
-+     }
-+  }
-+
-+  // te should have VideoEngine Created here
-+  ptrViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
-+  if (NULL == ptrViEBase) {
-+    return;
-+  }
-+
-+
-+  if( false == mVideoEngineInit)
-+  {
-+   error = ptrViEBase->Init();
-+   if (-1 == error ) {
-+      printf( "ERROR in VideoEngine::Init\n");
-+      return;
-+   }
-+    mVideoEngineInit = true;
-+  }
-+
-+  ptrViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
-+  if (NULL == ptrViECapture ) {
-+    printf("ERROR in ViECapture::GetInterface\n");
-+    return;
-+  }
-+
-+  int num = ptrViECapture->NumberOfCaptureDevices();
-+  if (num <= 0) {
-+    printf( "ERROR no video devices found\n");
-+    return;
-+  } else {
-+    printf("GetUserMedia:: Found %d devices!\n", num);
-+  }
-+
-+  for(int i=0; i < num; i++)
-+  {
-+    //let's create VideoSouce objects
-+    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine , i);
-+    aVSources->AppendElement( vSource );
-+  }
-+
-+  // safe to release local interfaces on the engine
-+   ptrViEBase->Release();
-+   ptrViECapture->Release();
-+
-+  return;
-+}
-+
-+void
-+MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources)
-+{
-+  // Be sure to release these at the end of the function
-+  // safety measure though
-+  webrtc::VoEBase* ptrVoEBase = NULL;
-+  webrtc::VoEHardware* ptrVoEHw = NULL;
-+  int error = 0;
-+
-+  if(NULL == mVoiceEngine)
-+  {
-+    mVoiceEngine = webrtc::VoiceEngine::Create();
-+    if(NULL == mVoiceEngine)
-+    {
-+ printf(" Unable to create voice engine ");
-+ return;
-+    }
-+  }
-+
-+  // all interfaces pointers are ref-counted
-+  // we should be good on mutiple calls to this function ..
-+  ptrVoEBase = webrtc::VoEBase::GetInterface( mVoiceEngine );
-+  if(NULL == ptrVoEBase)
-+  {
-+ printf(" VoEBase creation failed ");
-+ return;
-+  }
-+
-+  //Init the voice library for the common parts
-+  if(false == mAudioEngineInit)
-+  {
-+ error = ptrVoEBase->Init();
-+ if(-1 == error)
-+ {
-+   printf("\n Audio Engine Init Failed ");
-+ }
-+ mAudioEngineInit = true;
-+  }
-+
-+  ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-+  if(NULL == ptrVoEHw)
-+  {
-+ printf("\n Unable to get Audio Hardware Interface ");
-+    return;
-+  }
-+
-+  //let's enumerate audio input devices
-+  int nDevices = 0;
-+  error = ptrVoEHw->GetNumOfRecordingDevices(nDevices);
-+  printf("\n Number if devices is %d ",nDevices);
-+  for(int i = 0; i < nDevices; i++)
-+  {
-+     char deviceName[128];
-+   memset(deviceName, 0, 128);
-+   char uniqueId[128];
-+   memset(uniqueId, 0, 128);
-+     ptrVoEHw->GetRecordingDeviceName(i, deviceName,  uniqueId );
-+        nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(mVoiceEngine , i);
-+ aSource->AddRef();
-+   aASources->AppendElement( aSource );
-+  }
-+
-+  // releasing them to re-set the reference count ...
-+  ptrVoEHw->Release();
-+  ptrVoEBase->Release();
-+}
-+
-+
-+void
-+MediaEngineWebRTC::Shutdown()
-+{
-+
-+  if(mVideoEngine)
-+    webrtc::VideoEngine::Delete(mVideoEngine);
-+
-+  if(mVoiceEngine)
-+   webrtc::VoiceEngine::Delete(mVoiceEngine);
-+
-+  mVideoEngine = NULL;
-+  mVoiceEngine = NULL;
 +}
 +
 +}
@@ -2172,14 +1855,12 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCVideo.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,371 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
 +#include "MediaEngineWebRTC.h"
-+
-+#define CHANNELS 1
 +
 +namespace mozilla {
 +
@@ -2359,7 +2040,6 @@ new file mode 100644
 +  mSource = aStream;
 +  mTrackID = aID;
 +
-+  // Setup  a blank track.
 +  mImageContainer = layers::LayerManager::CreateImageContainer();
 +  mSource->AddTrack(aID, mFps, 0, new VideoSegment());
 +  mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
@@ -2546,400 +2226,16 @@ new file mode 100644
 +  mInitDone = false;
 +}
 +
-+
-+
-+/**
-+ * Webrtc audio source.
-+ */
-+
-+NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineWebRTCAudioSource, nsITimerCallback)
-+
-+//static initialization
-+const unsigned int MediaEngineWebRTCAudioSource::PLAYOUT_SAMPLE_FREQUENCY = 16000;
-+const unsigned int MediaEngineWebRTCAudioSource::PLAYOUT_SAMPLE_LENGTH  = 160;
-+const unsigned int MediaEngineWebRTCAudioSource::KMaxDeviceNameLength = 128;
-+const unsigned int MediaEngineWebRTCAudioSource::KMaxUniqueIdLength = 128;
-+
-+// Performs very basic & common initialization
-+void
-+MediaEngineWebRTCAudioSource::Init()
-+{
-+  if(NULL == mVoiceEngine)
-+   return;
-+
-+  mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
-+  if (NULL == mVoEBase )
-+  {
-+    printf( "ERROR in AudioEngine::VoEBase ");
-+    return;
-+  }
-+
-+  //get interfaces for capture, render for now
-+  mVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-+
-+  // check if all the interfaces were ok till now
-+  if(NULL == mVoEHw)
-+   return ;
-+
-+  mChannel = mVoEBase->CreateChannel();
-+  if(-1 == mChannel)
-+  {
-+ return;
-+  }
-+
-+  mVoEXmedia = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
-+  if(NULL == mVoEXmedia)
-+  {
-+    return;
-+  }
-+  //temp logging
-+  mVoiceEngine->SetTraceFilter(webrtc::kTraceAll);
-+  mVoiceEngine->SetTraceFile( "Voevideotrace.out" );
-+  mAudioSegment.Init(CHANNELS);
-+
-+  // we should be good by now
-+  mInitDone = true;
-+
-+}
-+
-+void
-+MediaEngineWebRTCAudioSource::GetName(nsAString& aName)
-+{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+  if(true == mInitDone)
-+  {
-+    mVoEHw->GetRecordingDeviceName(
-+             mCapIndex, deviceName,  uniqueId );
-+   aName.Assign(NS_ConvertASCIItoUTF16(deviceName));
-+  }
-+
-+  return;
-+}
-+
-+void
-+MediaEngineWebRTCAudioSource::GetUUID(nsAString& aUUID)
-+{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+  if(true == mInitDone )
-+  {
-+    mVoEHw->GetRecordingDeviceName(
-+             mCapIndex, deviceName,  uniqueId );
-+   aUUID.Assign(NS_ConvertASCIItoUTF16(uniqueId));
-+  }
-+
-+  return;
-+}
-+
-+already_AddRefed<nsDOMMediaStream>
-+MediaEngineWebRTCAudioSource::Allocate()
-+{
-+  if (mState != kReleased) {
-+    return NULL;
-+  }
-+  // no special webrtc code to be done , i hope
-+  mState = kAllocated;
-+  return nsDOMMediaStream::CreateInputStream();
-+}
-+
-+nsresult
-+MediaEngineWebRTCAudioSource::Deallocate()
-+{
-+  if (mState != kStopped && mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+  mState = kReleased;
-+  return NS_OK;
-+}
-+
-+//Loop back audio through media-stream
-+nsresult
-+MediaEngineWebRTCAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
-+{
-+  const int DEFAULT_PORT = 55555;
-+  printf("\n MediaEngineWebRTCAudioSource : Start: Entered ");
-+  if (false == mInitDone || mState != kAllocated) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  if(!aStream)
-+   return NS_ERROR_FAILURE;
-+
-+  mTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
-+  if (!mTimer) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mSource = aStream;
-+
-+  AudioSegment* segment = new AudioSegment();
-+  segment->Init(CHANNELS);
-+  //segment->InsertNullDataAtStart(1);
-+  mSource->AddTrack(aID, PLAYOUT_SAMPLE_FREQUENCY, 0, segment);
-+  mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
-+  mTrackID = aID;
-+
-+  printf("\n Starting the audio engine ");
-+  mVoEBase->SetLocalReceiver(mChannel,DEFAULT_PORT);
-+  mVoEBase->SetSendDestination(mChannel,DEFAULT_PORT,"127.0.0.1");
-+
-+  if(-1 == mVoEXmedia->SetExternalPlayoutStatus(true)) {
-+    printf("\n SetExternalPlayoutStatus failed %d ", mVoEBase->LastError() );
-+   return NS_ERROR_FAILURE;
-+  }
-+  //loopback audio
-+  mVoEBase->StartPlayout(mChannel);
-+  mVoEBase->StartReceive(mChannel);
-+  mVoEBase->StartSend(mChannel);
-+
-+  mState = kStarted;
-+  // call every 10 milliseconds
-+  mTimer->InitWithCallback(this, 10, nsITimer::TYPE_REPEATING_SLACK);
-+  return NS_OK;
-+}
-+
-+nsresult
-+MediaEngineWebRTCAudioSource::Stop()
-+{
-+  if (mState != kStarted) {
-+    return NS_ERROR_FAILURE;
-+  }
-+  if (!mTimer) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  if(!mVoEBase) {
-+    return NS_ERROR_FAILURE;
-+  }
-+
-+  mVoEBase->StopReceive(mChannel);
-+  mVoEBase->StopSend(mChannel);
-+  mVoEBase->StopPlayout(mChannel);
-+
-+  mTimer->Cancel();
-+  mTimer = NULL;
-+  mState = kStopped;
-+  return NS_OK;
-+}
-+
-+nsresult
-+MediaEngineWebRTCAudioSource::Snapshot(PRUint32 aDuration, nsIDOMFile** aFile)
-+{
-+   return NS_ERROR_NOT_IMPLEMENTED;
-+}
-+
-+
-+void
-+MediaEngineWebRTCAudioSource::Shutdown()
-+{
-+  if(false == mInitDone)
-+   return;
-+
-+  if(kStarted == mState)
-+  {
-+   //Stop External playout
-+   mVoEBase->StopReceive(mChannel);
-+   mVoEBase->StopSend(mChannel);
-+   mVoEBase->StopPlayout(mChannel);
-+   mTimer->Cancel();
-+   mTimer = NULL;
-+  }
-+
-+  mVoEBase->Terminate();
-+  mVoEXmedia->Release();
-+  mVoEHw->Release();
-+  mVoEBase->Release();
-+  mState = kReleased;
-+  mInitDone = false;
-+}
-+
-+
-+NS_IMETHODIMP
-+MediaEngineWebRTCAudioSource::Notify(nsITimer* aTimer)
-+{
-+  // just one audio sample
-+  static int16_t audio10ms[PLAYOUT_SAMPLE_LENGTH];
-+  int sample_length  =0;
-+  memset(audio10ms, 0, PLAYOUT_SAMPLE_LENGTH * sizeof(short));
-+  mVoEXmedia->ExternalPlayoutGetData(audio10ms, PLAYOUT_SAMPLE_FREQUENCY, 100, sample_length); 
-+  if(sample_length == 0)
-+  {
-+ return NS_OK;
-+  }
-+
-+  // allocate shared buffer of lenght bytes
-+  int buff_size = PLAYOUT_SAMPLE_LENGTH * sizeof(short);
-+  nsRefPtr<SharedBuffer> buffer = SharedBuffer::Create(buff_size);
-+  //buffer->AddRef();
-+  int16_t* dest = static_cast<int16_t*>(buffer->Data());
-+  for(int i=0; i < sample_length; i++)
-+  {
-+ dest[i] = audio10ms[i];
-+  }
-+
-+  mAudioSegment.AppendFrames(buffer.forget(), sample_length, 0, sample_length, nsAudioStream::FORMAT_S16_LE);
-+  mSource->AppendToTrack(mTrackID, &mAudioSegment);
-+  return NS_OK;
-+}
-+
-+//XXX: Not multi-threded and non-renterant -???
-+void
-+MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources)
-+{
-+  int error = 0;
-+  printf("\n EnumerateVideo Devices ");
-+
-+  //we can use it function locals .. no need to save it in the class
-+  webrtc::ViEBase* ptrViEBase;
-+  webrtc::ViECapture* ptrViECapture;
-+
-+  if(NULL == mVideoEngine)
-+  {
-+      mVideoEngine = webrtc::VideoEngine::Create();
-+      if (NULL == mVideoEngine )
-+ {
-+         printf( "ERROR in VideoEngine::Create\n");
-+        return;
-+     }
-+  }
-+
-+  // te should have VideoEngine Created here
-+  ptrViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
-+  if (NULL == ptrViEBase) {
-+    return;
-+  }
-+
-+
-+  if( false == mVideoEngineInit)
-+  {
-+   error = ptrViEBase->Init();
-+   if (-1 == error ) {
-+      printf( "ERROR in VideoEngine::Init\n");
-+      return;
-+   }
-+    mVideoEngineInit = true;
-+  }
-+
-+  ptrViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
-+  if (NULL == ptrViECapture ) {
-+    printf("ERROR in ViECapture::GetInterface\n");
-+    return;
-+  }
-+
-+  int num = ptrViECapture->NumberOfCaptureDevices();
-+  if (num <= 0) {
-+    printf( "ERROR no video devices found\n");
-+    return;
-+  } else {
-+    printf("GetUserMedia:: Found %d devices!\n", num);
-+  }
-+
-+  for(int i=0; i < num; i++)
-+  {
-+    //let's create VideoSouce objects
-+    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine , i);
-+    aVSources->AppendElement( vSource );
-+  }
-+
-+  // safe to release local interfaces on the engine
-+   ptrViEBase->Release();
-+   ptrViECapture->Release();
-+
-+  return;
-+}
-+
-+void
-+MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources)
-+{
-+  // Be sure to release these at the end of the function
-+  // safety measure though
-+  webrtc::VoEBase* ptrVoEBase = NULL;
-+  webrtc::VoEHardware* ptrVoEHw = NULL;
-+  int error = 0;
-+
-+  if(NULL == mVoiceEngine)
-+  {
-+    mVoiceEngine = webrtc::VoiceEngine::Create();
-+    if(NULL == mVoiceEngine)
-+    {
-+ printf(" Unable to create voice engine ");
-+ return;
-+    }
-+  }
-+
-+  // all interfaces pointers are ref-counted
-+  // we should be good on mutiple calls to this function ..
-+  ptrVoEBase = webrtc::VoEBase::GetInterface( mVoiceEngine );
-+  if(NULL == ptrVoEBase)
-+  {
-+ printf(" VoEBase creation failed ");
-+ return;
-+  }
-+
-+  //Init the voice library for the common parts
-+  if(false == mAudioEngineInit)
-+  {
-+ error = ptrVoEBase->Init();
-+ if(-1 == error)
-+ {
-+   printf("\n Audio Engine Init Failed ");
-+ }
-+ mAudioEngineInit = true;
-+  }
-+
-+  ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-+  if(NULL == ptrVoEHw)
-+  {
-+ printf("\n Unable to get Audio Hardware Interface ");
-+    return;
-+  }
-+
-+  //let's enumerate audio input devices
-+  int nDevices = 0;
-+  error = ptrVoEHw->GetNumOfRecordingDevices(nDevices);
-+  printf("\n Number if devices is %d ",nDevices);
-+  for(int i = 0; i < nDevices; i++)
-+  {
-+     char deviceName[128];
-+   memset(deviceName, 0, 128);
-+   char uniqueId[128];
-+   memset(uniqueId, 0, 128);
-+     ptrVoEHw->GetRecordingDeviceName(i, deviceName,  uniqueId );
-+        nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(mVoiceEngine , i);
-+ aSource->AddRef();
-+   aASources->AppendElement( aSource );
-+  }
-+
-+  // releasing them to re-set the reference count ...
-+  ptrVoEHw->Release();
-+  ptrVoEBase->Release();
-+}
-+
-+
-+void
-+MediaEngineWebRTC::Shutdown()
-+{
-+
-+  if(mVideoEngine)
-+    webrtc::VideoEngine::Delete(mVideoEngine);
-+
-+  if(mVoiceEngine)
-+   webrtc::VoiceEngine::Delete(mVoiceEngine);
-+
-+  mVideoEngine = NULL;
-+  mVoiceEngine = NULL;
-+}
-+
 +}
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 --- a/dom/media/Makefile.in
 +++ b/dom/media/Makefile.in
-@@ -34,5 +34,9 @@
+@@ -29,10 +29,14 @@ EXPORTS_NAMESPACE = mozilla
+ EXPORTS_mozilla = \
+   MediaManager.h \
+   $(NULL)
+ 
+ CPPSRCS = \
    MediaManager.cpp \
    $(NULL)
  
@@ -2952,7 +2248,11 @@ diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
 +++ b/dom/media/MediaManager.cpp
-@@ -5,8 +5,6 @@
+@@ -1,26 +1,31 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
  #include "MediaManager.h"
  
  #include "MediaStreamGraph.h"
@@ -2961,7 +2261,9 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  #include "nsIDOMFile.h"
  #include "nsIEventTarget.h"
  #include "nsIScriptGlobalObject.h"
-@@ -16,6 +14,13 @@
+ #include "nsIPopupWindowManager.h"
+ 
+ #include "nsJSUtils.h"
  #include "nsDOMFile.h"
  #include "nsGlobalWindow.h"
  
@@ -2975,7 +2277,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  namespace mozilla {
  
  /**
-@@ -64,7 +69,7 @@
+  * Send an error back to content. The error is the form a string.
+  * Do this only on the main thread.
+  */
+ class ErrorCallbackRunnable : public nsRunnable
+ {
+@@ -59,17 +64,17 @@ class SuccessCallbackRunnable : public n
+ public:
+   SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
+     nsIDOMFile* aFile, PRUint64 aWindowID)
+     : mSuccess(aSuccess)
+     , mFile(aFile)
      , mWindowID(aWindowID) {}
  
    SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
@@ -2984,16 +2296,31 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
      : mSuccess(aSuccess)
      , mStream(aStream)
      , mWindowID(aWindowID) {}
-@@ -93,155 +98,13 @@
+ 
+   NS_IMETHOD
+   Run()
+   {
+     // Only run if the window is still active.
+@@ -88,165 +93,65 @@ public:
+ private:
+   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+   nsCOMPtr<nsIDOMFile> mFile;
+   nsCOMPtr<nsIDOMMediaStream> mStream;
+   PRUint64 mWindowID;
  };
  
  /**
 - * This runnable creates a nsDOMMediaStream from a given MediaEngineSource
 - * and returns it via a success callback. Both must be done on the main thread.
-- */
++ * Creates a MediaStream, attaches a listener and fires off a success callback
++ * to the DOM with thes stream.
++ *
++ * All of this must be done on the main thread!
+  */
 -class GetUserMediaCallbackRunnable : public nsRunnable
--{
--public:
++class GetUserMediaStreamRunnable : public nsRunnable
+ {
+ public:
 -  GetUserMediaCallbackRunnable(MediaEngineSource* aSource, TrackID aId,
 -    nsIDOMGetUserMediaSuccessCallback* aSuccess,
 -    nsIDOMGetUserMediaErrorCallback* aError,
@@ -3004,11 +2331,18 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 -    , mSuccess(aSuccess)
 -    , mError(aError)
 -    , mWindowID(aWindowID)
--    , mListeners(aListeners) {}
--
--  NS_IMETHOD
--  Run()
--  {
++  GetUserMediaStreamRunnable(nsIDOMGetUserMediaSuccessCallback *aSuccess,
++    TrackID aID, StreamListeners* aListeners)
++    : mSuccess(aSuccess)
++    , mID(aID)
++    , mWindowID(aWindowId)
+     , mListeners(aListeners) {}
+ 
++  ~GetUserMediaStreamRunnable() {}
++
+   NS_IMETHOD
+   Run()
+   {
 -    /**
 -     * Normally we would now get the name & UUID for the device and ask the
 -     * user permission. We will do that when we have some UI. Currently,
@@ -3024,25 +2358,36 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 -      ));
 -      return NS_OK;
 -    }
--
--    // Add our listener. We'll call Start() on the source when get a callback
--    // that the MediaStream has started consuming. The listener is freed
--    // when the page is invalidated (on navigation or close).
--    GetUserMediaCallbackMediaStreamListener* listener =
++    // Create a media stream.
++    nsCOMPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateInputStream();
+ 
+     // Add our listener. We'll call Start() on the source when get a callback
+     // that the MediaStream has started consuming. The listener is freed
+     // when the page is invalidated (on navigation or close).
+     GetUserMediaCallbackMediaStreamListener* listener =
 -      new GetUserMediaCallbackMediaStreamListener(mSource, comStream, mId);
 -    comStream->GetStream()->AddListener(listener);
--
++      new GetUserMediaCallbackMediaStreamListener(aSource, stream, aID);
++    stream->GetStream()->AddListener(listener);
+ 
 -    {
 -      MutexAutoLock lock(*(MediaManager::Get()->GetLock()));
 -      mListeners->AppendElement(listener);
--    }
++    // No need for locking because we always do this in the main thread.
++    mListeners->AppendElement(listener);
++
++    // We're in the main thread, so no worries here either.
++    WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
++    if (activeWindows->Get(mWindowID)) {
++      mSuccess->OnSuccess(stream);
+     }
 -
 -    // Add the listener to CallbackRunnables so it can be invalidated.
 -    NS_DispatchToMainThread(new SuccessCallbackRunnable(
 -      mSuccess, comStream.get(), mWindowID
 -    ));
 -    return NS_OK;
--  }
+   }
 -
 -private:
 -  nsCOMPtr<MediaEngineSource> mSource;
@@ -3128,9 +2473,9 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 -  nsCOMPtr<nsPIDOMWindow> mWindow;
 -
 -  PRUint64 mWindowID;
--};
--
--/**
+ };
+ 
+ /**
   * Runs on a seperate thread and is responsible for enumerating devices.
   * Depending on whether a picture or stream was asked for, either
 - * GetUserMediaCallbackRunnable or GetUserMediaSnapshotCallbackRunnable
@@ -3144,7 +2489,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
   */
  class GetUserMediaRunnable : public nsRunnable
  {
-@@ -298,6 +161,101 @@
+ public:
+   GetUserMediaRunnable(bool aAudio, bool aVideo, bool aPicture,
+     nsIDOMGetUserMediaSuccessCallback* aSuccess,
+     nsIDOMGetUserMediaErrorCallback* aError,
+     nsPIDOMWindow* aWindow, StreamListeners* aListeners)
+@@ -293,34 +198,115 @@ public:
+     if (mAudio) {
+       SendAudio();
+       return NS_OK;
+     }
+ 
      return NS_OK;
    }
  
@@ -3153,7 +2508,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +   * a SuccessRunnable or an error via the ErrorRunnable. Off the main thread.
 +   */
 +  void
-+  ProcessGetUserMedia(MediaEngineSource* aSource, TrackID aId)
++  ProcessGetUserMedia(MediaEngineSource* aSource, TrackID aID)
 +  {
 +    /**
 +     * Normally we would now get the name & UUID for the device and ask the
@@ -3163,29 +2518,16 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +     *
 +     * See bug 748835 for progress on the desktop UI.
 +     */
-+    nsCOMPtr<nsDOMMediaStream> comStream = aSource->Allocate();
-+    if (!comStream) {
++    nsresult rv = aSource->Allocate();
++    if (!rv) { // NS_ERROR_CHECK!!!
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
 +      ));
 +      return;
 +    }
 +
-+    // Add our listener. We'll call Start() on the source when get a callback
-+    // that the MediaStream has started consuming. The listener is freed
-+    // when the page is invalidated (on navigation or close).
-+    GetUserMediaCallbackMediaStreamListener* listener =
-+      new GetUserMediaCallbackMediaStreamListener(aSource, comStream, aId);
-+    comStream->GetStream()->AddListener(listener);
-+
-+    {
-+      MutexAutoLock lock(*(MediaManager::Get()->GetLock()));
-+      mListeners->AppendElement(listener);
-+    }
-+
-+    // Add the listener to CallbackRunnables so it can be invalidated.
-+    NS_DispatchToMainThread(new SuccessCallbackRunnable(
-+      mSuccess, comStream.forget(), mWindowID
++    NS_DispatchToMainThread(new GetUserMediaStreamRunnable(
++      mSuccess, aID, mWindowID, mListeners
 +    ));
 +    return;
 +  }
@@ -3246,7 +2588,14 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    // {picture:true}
    void
    SendPicture()
-@@ -312,10 +270,9 @@
+   {
+     nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+     mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
+ 
+     PRUint32 count = videoSources.Length();
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
        ));
        return;
      }
@@ -3259,7 +2608,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
    // {video:true}
-@@ -334,9 +291,7 @@
+   void
+   SendVideo()
+   {
+     nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+     mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
+@@ -329,19 +315,17 @@ public:
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+       ));
+       return;
      }
  
      MediaEngineVideoSource* videoSource = videoSources[count - 1];
@@ -3270,7 +2629,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
    // {audio:true}
-@@ -355,9 +310,7 @@
+   void
+   SendAudio()
+   {
+     nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
+     mManager->GetBackend()->EnumerateAudioDevices(&audioSources);
+@@ -350,19 +334,17 @@ public:
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+       ));
+       return;
      }
  
      MediaEngineAudioSource* audioSource = audioSources[count - 1];
@@ -3281,7 +2650,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
  private:
-@@ -415,7 +368,7 @@
+   bool mAudio;
+   bool mVideo;
+   bool mPicture;
+ 
+   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+@@ -410,17 +392,17 @@ MediaManager::GetUserMedia(nsPIDOMWindow
+   // when this window is closed or navigated away from.
+   PRUint64 windowID = aWindow->WindowID();
+   StreamListeners* listeners = mActiveWindows.Get(windowID);
+   if (!listeners) {
+     listeners = new StreamListeners;
      mActiveWindows.Put(windowID, listeners);
    }
  
@@ -3290,7 +2669,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    // MediaStreamListener to the runnable list.
    nsCOMPtr<nsIRunnable> gUMRunnable = new GetUserMediaRunnable(
      audio, video, picture, onSuccess, onError, aWindow, listeners
-@@ -434,11 +387,16 @@
+   );
+ 
+   // Reuse the same thread to save memory.
+   if (!mMediaThread) {
+     rv = NS_NewThread(getter_AddRefs(mMediaThread));
+@@ -429,21 +411,26 @@ MediaManager::GetUserMedia(nsPIDOMWindow
+ 
+   mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
+   return NS_OK;
+ }
+ 
  MediaEngine*
  MediaManager::GetBackend()
  {
@@ -3309,10 +2698,20 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    return mBackend;
  }
  
+ WindowTable*
+ MediaManager::GetActiveWindows()
+ {
+   return &mActiveWindows;
+ }
 diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 --- a/dom/media/MediaManager.h
 +++ b/dom/media/MediaManager.h
-@@ -16,6 +16,32 @@
+@@ -11,28 +11,54 @@
+ 
+ #include "nsPIDOMWindow.h"
+ #include "nsIDOMNavigatorUserMedia.h"
+ #include "mozilla/Attributes.h"
+ 
  namespace mozilla {
  
  /**
@@ -3326,49 +2725,95 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 +    TrackID aListenId)
 +  : mSource(aSource)
 +  , mStream(aStream)
-+  , mId(aListenId) {}
++  , mID(aListenId) {}
 +
 +  NS_IMETHOD
 +  Run()
 +  {
-+    mSource->Start(mStream, mId);
++    mSource->Start(mStream, mID);
 +    return NS_OK;
 +  }
 +
 +private:
 +  nsRefPtr<MediaEngineSource> mSource;
 +  SourceMediaStream* mStream;
-+  TrackID mId;
++  TrackID mID;
 +};
 +
 +/**
   * This class is an implementation of MediaStreamListener. This is used
   * to Start() and Stop() the underlying MediaEngineSource when MediaStreams
   * are assigned and deassigned in content.
-@@ -47,7 +73,9 @@
+  */
+ class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener
+ {
+ public:
+   GetUserMediaCallbackMediaStreamListener(MediaEngineSource* aSource,
+     nsDOMMediaStream* aStream, TrackID aListenId)
+     : mSource(aSource)
+     , mStream(aStream)
+-    , mId(aListenId)
++    , mID(aListenId)
+     , mValid(true) {}
+ 
+   void
+   Invalidate()
+   {
+     if (!mValid) {
+       return;
+     }
+@@ -42,17 +68,19 @@ public:
+     mSource->Deallocate();
+   }
+ 
+   void
+   NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming)
    {
      if (aConsuming == CONSUMED) {
        nsRefPtr<SourceMediaStream> stream = mStream->GetStream()->AsSourceStream();
 -      mSource->Start(stream, mId);
 +      NS_DispatchToMainThread(new StartMediaRunnable(
-+        mSource, stream, mId
++        mSource, stream, mID
 +      ));
        return;
      }
  
-@@ -65,7 +93,7 @@
+     // NOT_CONSUMED
+     Invalidate();
+     return;
+   }
+ 
+@@ -60,19 +88,19 @@ public:
+   void NotifyOutput(MediaStreamGraph* aGraph) {}
+   void NotifyFinished(MediaStreamGraph* aGraph) {}
+   void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
+     TrackRate aTrackRate, TrackTicks aTrackOffset,
+     PRUint32 aTrackEvents, const MediaSegment& aQueuedMedia) {}
    nsresult Run() { return NS_OK; }
  
  private:
 -  nsCOMPtr<MediaEngineSource> mSource;
 +  nsRefPtr<MediaEngineSource> mSource;
    nsCOMPtr<nsDOMMediaStream> mStream;
-   TrackID mId;
+-  TrackID mId;
++  TrackID mID;
    bool mValid;
+ };
+ 
+ typedef nsTArray<nsRefPtr<GetUserMediaCallbackMediaStreamListener> > StreamListeners;
+ typedef nsClassHashtable<nsUint64HashKey, StreamListeners> WindowTable;
+ 
+ class MediaManager MOZ_FINAL : public nsIObserver {
+ public:
 diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
 --- a/layout/build/Makefile.in
 +++ b/layout/build/Makefile.in
-@@ -129,6 +129,7 @@
+@@ -124,16 +124,17 @@ SHARED_LIBRARY_LIBS	+= \
+   $(DEPTH)/dom/system/gonk/$(LIB_PREFIX)domsystemgonk_s.$(LIB_SUFFIX) \
+   $(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
+   $(NULL)
+ endif #}
+ 
  ifdef MOZ_MEDIA
  SHARED_LIBRARY_LIBS 	+= \
  	$(DEPTH)/content/media/$(LIB_PREFIX)gkconmedia_s.$(LIB_SUFFIX) \
@@ -3376,3 +2821,8 @@ diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
  	$(NULL)
  endif
  
+ ifdef MOZ_OGG
+ SHARED_LIBRARY_LIBS 	+= \
+ 	$(DEPTH)/content/media/ogg/$(LIB_PREFIX)gkconogg_s.$(LIB_SUFFIX) \
+ 	$(NULL)
+ endif
