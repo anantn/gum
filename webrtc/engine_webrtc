@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 0171a220f81479128b05bc3168b51696267f3611
+# Parent c536b8ec3988217e6c847cd950a87baa98d409c9
 # User Anant Narayanan <anant@kix.in>
 Add WebRTC MediaEngine implementation
 
@@ -378,7 +378,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCAudio.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,236 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -409,23 +409,19 @@ new file mode 100644
 +
 +  mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
 +  if (!mVoEBase) {
-+    printf( "ERROR in AudioEngine::VoEBase ");
++    printf("ERROR in AudioEngine::VoEBase\n");
 +    return;
 +  }
 +
 +  mVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-+
 +  if (!mVoEHw) {
-+    return;
-+  }
-+
-+  mChannel = mVoEBase->CreateChannel();
-+  if (mChannel < 0) {
++    printf("ERROR could not create VoEHardware\n");
 +    return;
 +  }
 +
 +  mVoERender = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
 +  if (!mVoERender) {
++    printf("ERROR could not create VoEExternalMedia\n");
 +    return;
 +  }
 +
@@ -459,7 +455,7 @@ new file mode 100644
 +  char uniqueId[KMaxUniqueIdLength];
 +  memset(uniqueId, 0, KMaxUniqueIdLength);
 +
-+  if(mInitDone) {
++  if (mInitDone) {
 +    mVoEHw->GetRecordingDeviceName(mCapIndex, deviceName, uniqueId);
 +    aUUID.Assign(NS_ConvertASCIItoUTF16(uniqueId));
 +  }
@@ -474,6 +470,16 @@ new file mode 100644
 +    return NS_ERROR_FAILURE;
 +  }
 +
++  if (mVoEBase->Init() < 0) {
++    printf("ERROR could not init mVoEBase\n");
++    return NS_ERROR_FAILURE;
++  }
++
++  mChannel = mVoEBase->CreateChannel();
++  if (mChannel < 0) {
++    printf("ERROR could not create channel!\n");
++    return NS_ERROR_FAILURE;
++  }
 +  // Audio doesn't play through unless we set a receiver and destination, so
 +  // we setup a dummy local destination.
 +  printf("\n Starting the audio engine ");
@@ -515,13 +521,18 @@ new file mode 100644
 +  mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
 +  mTrackID = aID;
 +
++  printf("What's the error code? \n", mVoEBase->LastError());
++
 +  if (mVoEBase->StartReceive(mChannel)) {
++    printf("StartReceive failed with %d\n", mVoEBase->LastError());
 +    return NS_ERROR_FAILURE;
 +  }
 +  if (mVoEBase->StartPlayout(mChannel)) {
++    printf("StartPlayout failed with %d\n", mVoEBase->LastError());
 +    return NS_ERROR_FAILURE;
 +  }
 +  if (mVoEBase->StartSend(mChannel)) {
++    printf("StartSend failed with%d\n", mVoEBase->LastError());
 +    return NS_ERROR_FAILURE;
 +  }
 +
@@ -598,6 +609,7 @@ new file mode 100644
 +    buffer.forget(), length, 0, length, nsAudioStream::FORMAT_S16_LE
 +  );
 +  mSource->AppendToTrack(mTrackID, &mAudioSegment);
++  printf("I appended a frame!!\n");
 +
 +  return;
 +}
