@@ -1,12 +1,17 @@
 # HG changeset patch
-# Parent b17c9ce7b501ab42c784d20ef15168a2e0cfcf6e
+# Parent 5f06049b9c017084a0cbcbc351f63d0cdd715e77
 # User Anant Narayanan <anant@kix.in>
 Add WebRTC MediaEngine implementation
 
 diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
 --- a/content/media/webrtc/Makefile.in
 +++ b/content/media/webrtc/Makefile.in
-@@ -16,10 +16,14 @@
+@@ -11,20 +11,24 @@ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE = content
+ LIBRARY_NAME = gkconwebrtc_s
+ LIBXUL_LIBRARY = 1
+ 
  EXPORTS	+= \
    MediaEngine.h \
    MediaEngineDefault.h \
@@ -21,6 +26,11 @@ diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
    $(NULL)
  
  FORCE_STATIC_LIB = 1
+ 
+ include $(topsrcdir)/config/rules.mk
+ 
+ LOCAL_INCLUDES += \
+   -I$(topsrcdir)/media/webrtc/trunk/src \
 diff --git a/content/media/webrtc/MediaEngineWebRTC.cpp b/content/media/webrtc/MediaEngineWebRTC.cpp
 new file mode 100644
 --- /dev/null
@@ -90,7 +100,6 @@ new file mode 100644
 +    if (!mVoiceEngine) {
 +      return;
 +    }
-+    mVoiceEngine->SetTraceFile("GIPSVoETrace.txt");
 +  }
 +
 +  ptrVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
@@ -113,11 +122,12 @@ new file mode 100644
 +  int nDevices = 0;
 +  ptrVoEHw->GetNumOfRecordingDevices(nDevices);
 +  for (int i = 0; i < nDevices; i++) {
++    // We use constants here because GetRecordingDeviceName takes char[128].
 +    char deviceName[128];
-+    memset(deviceName, 0, 128);
++    memset(deviceName, 0, sizeof(deviceName));
 +
 +    char uniqueID[128];
-+    memset(uniqueID, 0, 128);
++    memset(uniqueID, 0, sizeof(uniqueID));
 +
 +    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueID);
 +    nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(
@@ -151,7 +161,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/Med
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTC.h
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,242 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -169,6 +179,7 @@ new file mode 100644
 +#include "nsDOMFile.h"
 +#include "nsThreadUtils.h"
 +#include "nsDOMMediaStream.h"
++#include "nsDirectoryServiceDefs.h"
 +#include "nsComponentManagerUtils.h"
 +
 +#include "Layers.h"
@@ -251,7 +262,7 @@ new file mode 100644
 +  Run()
 +  {
 +    nsCOMPtr<nsIFile> tmp;
-+    nsresult rv = NS_GetSpecialDirectory("TmpD", getter_AddRefs(tmp));
++    nsresult rv = NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(tmp));
 +    NS_ENSURE_SUCCESS(rv, rv);
 +
 +    tmp->Append(NS_LITERAL_STRING("webrtc_snapshot.jpeg"));
@@ -313,8 +324,8 @@ new file mode 100644
 +    , mChannel(-1)
 +    , mInitDone(false)
 +    , mState(kReleased) {
-+      
-+    mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine); 
++
++    mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
 +    mDeviceName.Assign(NS_ConvertASCIItoUTF16(name));
 +    mDeviceUUID.Assign(NS_ConvertASCIItoUTF16(uuid));
 +    mInitDone = true;
@@ -397,7 +408,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCAudio.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,224 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -406,9 +417,11 @@ new file mode 100644
 +
 +#define CHANNELS 1
 +#define ENCODING "L16"
++#define DEFAULT_PORT 5555
++
 +#define SAMPLE_RATE 256000
 +#define SAMPLE_FREQUENCY 16000
-+#define DEFAULT_PORT 5555
++#define SAMPLE_LENGTH ((SAMPLE_FREQUENCY*10)/1000)
 +
 +namespace mozilla {
 +
@@ -450,7 +463,7 @@ new file mode 100644
 +  if (!mVoERender) {
 +    return NS_ERROR_FAILURE;
 +  }
-+  
++
 +  mChannel = mVoEBase->CreateChannel();
 +  if (mChannel < 0) {
 +    return NS_ERROR_FAILURE;
@@ -475,14 +488,14 @@ new file mode 100644
 +  if (!ptrVoECodec) {
 +    return NS_ERROR_FAILURE;
 +  }
-+  
++
 +  strcpy(codec.plname, ENCODING);
 +  codec.channels = CHANNELS;
 +  codec.rate = SAMPLE_RATE;
 +  codec.plfreq = SAMPLE_FREQUENCY;
-+  codec.pacsize = 160; // Default packet size
-+  codec.pltype = 0;    // Payload type
-+  
++  codec.pacsize = SAMPLE_LENGTH;
++  codec.pltype = 0; // Default payload type
++
 +  if (ptrVoECodec->SetSendCodec(mChannel, codec)) {
 +    return NS_ERROR_FAILURE;
 +  }
@@ -927,7 +940,7 @@ new file mode 100644
 +
 +  nsCOMPtr<nsIFile> file;
 +  nsresult rv = NS_NewLocalFile(*mSnapshotPath, false, getter_AddRefs(file));
-+  
++
 +  delete mSnapshotPath;
 +  mSnapshotPath = NULL;
 +
