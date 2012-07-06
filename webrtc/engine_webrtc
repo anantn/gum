@@ -1,17 +1,12 @@
 # HG changeset patch
-# Parent c536b8ec3988217e6c847cd950a87baa98d409c9
+# Parent b17c9ce7b501ab42c784d20ef15168a2e0cfcf6e
 # User Anant Narayanan <anant@kix.in>
 Add WebRTC MediaEngine implementation
 
 diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
 --- a/content/media/webrtc/Makefile.in
 +++ b/content/media/webrtc/Makefile.in
-@@ -11,20 +11,24 @@ include $(DEPTH)/config/autoconf.mk
- 
- MODULE = content
- LIBRARY_NAME = gkconwebrtc_s
- LIBXUL_LIBRARY = 1
- 
+@@ -16,10 +16,14 @@
  EXPORTS	+= \
    MediaEngine.h \
    MediaEngineDefault.h \
@@ -26,16 +21,11 @@ diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
    $(NULL)
  
  FORCE_STATIC_LIB = 1
- 
- include $(topsrcdir)/config/rules.mk
- 
- LOCAL_INCLUDES += \
-   -I$(topsrcdir)/media/webrtc/trunk/src \
 diff --git a/content/media/webrtc/MediaEngineWebRTC.cpp b/content/media/webrtc/MediaEngineWebRTC.cpp
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTC.cpp
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,121 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -47,14 +37,11 @@ new file mode 100644
 +void
 +MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources)
 +{
-+  int error = 0;
-+
 +  webrtc::ViEBase* ptrViEBase;
 +  webrtc::ViECapture* ptrViECapture;
 +
 +  if (!mVideoEngine) {
-+    mVideoEngine = webrtc::VideoEngine::Create();
-+    if (!mVideoEngine) {
++    if (!(mVideoEngine = webrtc::VideoEngine::Create())) {
 +      return;
 +    }
 +  }
@@ -95,7 +82,6 @@ new file mode 100644
 +void
 +MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources)
 +{
-+  int error = 0;
 +  webrtc::VoEBase* ptrVoEBase = NULL;
 +  webrtc::VoEHardware* ptrVoEHw = NULL;
 +
@@ -104,6 +90,7 @@ new file mode 100644
 +    if (!mVoiceEngine) {
 +      return;
 +    }
++    mVoiceEngine->SetTraceFile("GIPSVoETrace.txt");
 +  }
 +
 +  ptrVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
@@ -124,17 +111,18 @@ new file mode 100644
 +  }
 +
 +  int nDevices = 0;
-+  error = ptrVoEHw->GetNumOfRecordingDevices(nDevices);
-+  printf("\n Number if devices is %d ",nDevices);
++  ptrVoEHw->GetNumOfRecordingDevices(nDevices);
 +  for (int i = 0; i < nDevices; i++) {
 +    char deviceName[128];
 +    memset(deviceName, 0, 128);
 +
-+    char uniqueId[128];
-+    memset(uniqueId, 0, 128);
++    char uniqueID[128];
++    memset(uniqueID, 0, 128);
 +
-+    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueId);
-+    nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(mVoiceEngine, i);
++    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueID);
++    nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(
++      mVoiceEngine, i, deviceName, uniqueID
++    );
 +    aASources->AppendElement(aSource.forget());
 +  }
 +
@@ -163,7 +151,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/Med
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTC.h
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,241 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -173,16 +161,16 @@ new file mode 100644
 +
 +#include "prmem.h"
 +#include "prcvar.h"
++#include "prthread.h"
 +#include "nsIThread.h"
 +#include "nsIRunnable.h"
 +
 +#include "nsCOMPtr.h"
++#include "nsDOMFile.h"
++#include "nsThreadUtils.h"
 +#include "nsDOMMediaStream.h"
 +#include "nsComponentManagerUtils.h"
-+#include "nsDOMFile.h"
 +
-+#include "prthread.h"
-+#include "nsThreadUtils.h"
 +#include "Layers.h"
 +#include "VideoUtils.h"
 +#include "MediaEngine.h"
@@ -196,6 +184,7 @@ new file mode 100644
 +
 +// Audio Engine
 +#include "voice_engine/main/interface/voe_base.h"
++#include "voice_engine/main/interface/voe_codec.h"
 +#include "voice_engine/main/interface/voe_hardware.h"
 +#include "voice_engine/main/interface/voe_audio_processing.h"
 +#include "voice_engine/main/interface/voe_volume_control.h"
@@ -215,15 +204,16 @@ new file mode 100644
 + * The WebRTC implementation of the MediaEngine interface.
 + */
 +
-+enum WebrtcEngineState {
++enum WebRTCEngineState {
 +  kAllocated,
 +  kStarted,
 +  kStopped,
-+  kReleased,
++  kReleased
 +};
 +
 +class MediaEngineWebRTCVideoSource : public MediaEngineVideoSource,
-+                                     public webrtc::ExternalRenderer
++                                     public webrtc::ExternalRenderer,
++                                     public nsRunnable
 +{
 +public:
 +  // ViEExternalRenderer.
@@ -240,7 +230,8 @@ new file mode 100644
 +    , mMonitor("WebRTCCamera.Monitor")
 +    , mFps(aFps)
 +    , mInitDone(false)
-+    , mInSnapshotMode(false) { Init(); }
++    , mInSnapshotMode(false)
++    , mSnapshotPath(NULL) { Init(); }
 +
 +  ~MediaEngineWebRTCVideoSource() { Shutdown(); }
 +
@@ -254,6 +245,25 @@ new file mode 100644
 +  virtual nsresult Snapshot(PRUint32 aDuration, nsIDOMFile** aFile);
 +
 +  NS_DECL_ISUPPORTS
++
++  // This runnable is for creating a temporary file on the main thread.
++  NS_IMETHODIMP
++  Run()
++  {
++    nsCOMPtr<nsIFile> tmp;
++    nsresult rv = NS_GetSpecialDirectory("TmpD", getter_AddRefs(tmp));
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    tmp->Append(NS_LITERAL_STRING("webrtc_snapshot.jpeg"));
++    rv = tmp->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    mSnapshotPath = new nsString();
++    rv = tmp->GetPath(*mSnapshotPath);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    return NS_OK;
++  }
 +
 +private:
 +  static const unsigned int KMaxDeviceNameLength;
@@ -275,33 +285,40 @@ new file mode 100644
 +  int mWidth, mHeight;
 +  TrackID mTrackID;
 +
-+  WebrtcEngineState mState;
++  WebRTCEngineState mState;
 +  mozilla::ReentrantMonitor mMonitor; // Monitor for processing WebRTC frames.
 +  SourceMediaStream* mSource;
 +
 +  int mFps; // Track rate (30 fps by default)
 +  bool mInitDone;
 +  bool mInSnapshotMode;
++  nsString* mSnapshotPath;
++
 +  nsRefPtr<layers::ImageContainer> mImageContainer;
 +
 +  PRLock* mSnapshotLock;
 +  PRCondVar* mSnapshotCondVar;
++
 +};
 +
 +class MediaEngineWebRTCAudioSource : public MediaEngineAudioSource,
 +                                     public webrtc::VoEMediaProcess
 +{
 +public:
-+  static const unsigned int PLAYOUT_SAMPLE_FREQUENCY; // Default is 16000.
-+  static const unsigned int PLAYOUT_SAMPLE_LENGTH; // Default is 160.
-+
-+  MediaEngineWebRTCAudioSource(webrtc::VoiceEngine* voiceEngine, int aIndex)
-+  : mVoiceEngine(voiceEngine)
-+  , mMonitor("WebRTCMic.Monitor")
-+  , mCapIndex(aIndex)
-+  , mChannel(-1)
-+  , mInitDone(false)
-+  , mState(kReleased) { Init(); }
++  MediaEngineWebRTCAudioSource(webrtc::VoiceEngine* voiceEngine, int aIndex,
++    char* name, char* uuid)
++    : mVoiceEngine(voiceEngine)
++    , mMonitor("WebRTCMic.Monitor")
++    , mCapIndex(aIndex)
++    , mChannel(-1)
++    , mInitDone(false)
++    , mState(kReleased) {
++      
++    mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine); 
++    mDeviceName.Assign(NS_ConvertASCIItoUTF16(name));
++    mDeviceUUID.Assign(NS_ConvertASCIItoUTF16(uuid));
++    mInitDone = true;
++  }
 +
 +  ~MediaEngineWebRTCAudioSource() { Shutdown(); }
 +
@@ -330,7 +347,6 @@ new file mode 100644
 +
 +  webrtc::VoiceEngine* mVoiceEngine;
 +  webrtc::VoEBase* mVoEBase;
-+  webrtc::VoEHardware* mVoEHw;
 +  webrtc::VoEExternalMedia* mVoERender;
 +
 +  mozilla::ReentrantMonitor mMonitor;
@@ -339,9 +355,12 @@ new file mode 100644
 +  int mChannel;
 +  TrackID mTrackID;
 +  bool mInitDone;
-+  WebrtcEngineState mState;
++  WebRTCEngineState mState;
++
++  nsString mDeviceName;
++  nsString mDeviceUUID;
++
 +  SourceMediaStream* mSource;
-+  AudioSegment mAudioSegment;
 +};
 +
 +class MediaEngineWebRTC : public MediaEngine
@@ -378,7 +397,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCAudio.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,222 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -386,6 +405,10 @@ new file mode 100644
 +#include "MediaEngineWebRTC.h"
 +
 +#define CHANNELS 1
++#define ENCODING "L16"
++#define SAMPLE_RATE 256000
++#define SAMPLE_FREQUENCY 16000
++#define DEFAULT_PORT 5555
 +
 +namespace mozilla {
 +
@@ -394,53 +417,11 @@ new file mode 100644
 + */
 +NS_IMPL_THREADSAFE_ISUPPORTS0(MediaEngineWebRTCAudioSource)
 +
-+const unsigned int MediaEngineWebRTCAudioSource::PLAYOUT_SAMPLE_FREQUENCY = 16000;
-+const unsigned int MediaEngineWebRTCAudioSource::PLAYOUT_SAMPLE_LENGTH  = 160;
-+const unsigned int MediaEngineWebRTCAudioSource::KMaxDeviceNameLength = 128;
-+const unsigned int MediaEngineWebRTCAudioSource::KMaxUniqueIdLength = 128;
-+
-+// Called by constructor.
-+void
-+MediaEngineWebRTCAudioSource::Init()
-+{
-+  if (!mVoiceEngine) {
-+    return;
-+  }
-+
-+  mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
-+  if (!mVoEBase) {
-+    printf("ERROR in AudioEngine::VoEBase\n");
-+    return;
-+  }
-+
-+  mVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-+  if (!mVoEHw) {
-+    printf("ERROR could not create VoEHardware\n");
-+    return;
-+  }
-+
-+  mVoERender = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
-+  if (!mVoERender) {
-+    printf("ERROR could not create VoEExternalMedia\n");
-+    return;
-+  }
-+
-+  mAudioSegment.Init(CHANNELS);
-+  mInitDone = true;
-+}
-+
 +void
 +MediaEngineWebRTCAudioSource::GetName(nsAString& aName)
 +{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+
 +  if (mInitDone) {
-+    mVoEHw->GetRecordingDeviceName(mCapIndex, deviceName, uniqueId);
-+    aName.Assign(NS_ConvertASCIItoUTF16(deviceName));
++    aName.Assign(mDeviceName);
 +  }
 +
 +  return;
@@ -449,15 +430,8 @@ new file mode 100644
 +void
 +MediaEngineWebRTCAudioSource::GetUUID(nsAString& aUUID)
 +{
-+  char deviceName[KMaxDeviceNameLength];
-+  memset(deviceName, 0, KMaxDeviceNameLength);
-+
-+  char uniqueId[KMaxUniqueIdLength];
-+  memset(uniqueId, 0, KMaxUniqueIdLength);
-+
 +  if (mInitDone) {
-+    mVoEHw->GetRecordingDeviceName(mCapIndex, deviceName, uniqueId);
-+    aUUID.Assign(NS_ConvertASCIItoUTF16(uniqueId));
++    aUUID.Assign(mDeviceUUID);
 +  }
 +
 +  return;
@@ -470,22 +444,53 @@ new file mode 100644
 +    return NS_ERROR_FAILURE;
 +  }
 +
-+  if (mVoEBase->Init() < 0) {
-+    printf("ERROR could not init mVoEBase\n");
++  mVoEBase->Init();
++
++  mVoERender = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
++  if (!mVoERender) {
++    return NS_ERROR_FAILURE;
++  }
++  
++  mChannel = mVoEBase->CreateChannel();
++  if (mChannel < 0) {
 +    return NS_ERROR_FAILURE;
 +  }
 +
-+  mChannel = mVoEBase->CreateChannel();
-+  if (mChannel < 0) {
-+    printf("ERROR could not create channel!\n");
++  // Check for availability.
++  webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
++  if (ptrVoEHw->SetRecordingDevice(mCapIndex)) {
 +    return NS_ERROR_FAILURE;
 +  }
++
++  bool avail = false;
++  ptrVoEHw->GetRecordingDeviceStatus(avail);
++  if (!avail) {
++    return NS_ERROR_FAILURE;
++  }
++
++  // Set "codec" to PCM, 32kHz on 1 channel
++  webrtc::VoECodec* ptrVoECodec;
++  webrtc::CodecInst codec;
++  ptrVoECodec = webrtc::VoECodec::GetInterface(mVoiceEngine);
++  if (!ptrVoECodec) {
++    return NS_ERROR_FAILURE;
++  }
++  
++  strcpy(codec.plname, ENCODING);
++  codec.channels = CHANNELS;
++  codec.rate = SAMPLE_RATE;
++  codec.plfreq = SAMPLE_FREQUENCY;
++  codec.pacsize = 160; // Default packet size
++  codec.pltype = 0;    // Payload type
++  
++  if (ptrVoECodec->SetSendCodec(mChannel, codec)) {
++    return NS_ERROR_FAILURE;
++  }
++
 +  // Audio doesn't play through unless we set a receiver and destination, so
-+  // we setup a dummy local destination.
-+  printf("\n Starting the audio engine ");
-+  const int DEFAULT_PORT = 55555;
++  // we setup a dummy local destination, and do a loopback.
 +  mVoEBase->SetLocalReceiver(mChannel, DEFAULT_PORT);
-+  mVoEBase->SetSendDestination(mChannel, DEFAULT_PORT,"127.0.0.1");
++  mVoEBase->SetSendDestination(mChannel, DEFAULT_PORT, "127.0.0.1");
 +
 +  mState = kAllocated;
 +  return NS_OK;
@@ -498,6 +503,9 @@ new file mode 100644
 +    return NS_ERROR_FAILURE;
 +  }
 +
++  mVoEBase->Terminate();
++  mVoERender->Release();
++
 +  mState = kReleased;
 +  return NS_OK;
 +}
@@ -505,7 +513,6 @@ new file mode 100644
 +nsresult
 +MediaEngineWebRTCAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
 +{
-+  printf("\n MediaEngineWebRTCAudioSource : Start: Entered ");
 +  if (!mInitDone || mState != kAllocated) {
 +    return NS_ERROR_FAILURE;
 +  }
@@ -517,22 +524,14 @@ new file mode 100644
 +
 +  AudioSegment* segment = new AudioSegment();
 +  segment->Init(CHANNELS);
-+  mSource->AddTrack(aID, PLAYOUT_SAMPLE_FREQUENCY, 0, segment);
++  mSource->AddTrack(aID, SAMPLE_FREQUENCY, 0, segment);
 +  mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
 +  mTrackID = aID;
 +
-+  printf("What's the error code? \n", mVoEBase->LastError());
-+
 +  if (mVoEBase->StartReceive(mChannel)) {
-+    printf("StartReceive failed with %d\n", mVoEBase->LastError());
-+    return NS_ERROR_FAILURE;
-+  }
-+  if (mVoEBase->StartPlayout(mChannel)) {
-+    printf("StartPlayout failed with %d\n", mVoEBase->LastError());
 +    return NS_ERROR_FAILURE;
 +  }
 +  if (mVoEBase->StartSend(mChannel)) {
-+    printf("StartSend failed with%d\n", mVoEBase->LastError());
 +    return NS_ERROR_FAILURE;
 +  }
 +
@@ -555,9 +554,12 @@ new file mode 100644
 +
 +  mVoERender->DeRegisterExternalMediaProcessing(mChannel, webrtc::kRecordingPerChannel);
 +
-+  mVoEBase->StopSend(mChannel);
-+  mVoEBase->StopReceive(mChannel);
-+  mVoEBase->StopPlayout(mChannel);
++  if (mVoEBase->StopSend(mChannel)) {
++    return NS_ERROR_FAILURE;
++  }
++  if (mVoEBase->StopReceive(mChannel)) {
++    return NS_ERROR_FAILURE;
++  }
 +
 +  mState = kStopped;
 +  return NS_OK;
@@ -578,38 +580,41 @@ new file mode 100644
 +  }
 +
 +  if (mState == kStarted) {
-+    mVoEBase->StopSend(mChannel);
-+    mVoEBase->StopReceive(mChannel);
-+    mVoEBase->StopPlayout(mChannel);
++    Stop();
 +  }
 +
-+  mVoEBase->Terminate();
-+  mVoERender->Release();
-+  mVoEHw->Release();
-+  mVoEBase->Release();
-+  mState = kReleased;
++  if (mState == kAllocated) {
++    Deallocate();
++  }
 +
++  mVoEBase->Release();
++
++  mState = kReleased;
 +  mInitDone = false;
 +}
 +
++typedef WebRtc_Word16 sample;
++
 +void
 +MediaEngineWebRTCAudioSource::Process(const int channel,
-+  const webrtc::ProcessingTypes type, WebRtc_Word16 audio10ms[],
++  const webrtc::ProcessingTypes type, sample* audio10ms,
 +  const int length, const int samplingFreq, const bool isStereo)
 +{
-+  int bsize = PLAYOUT_SAMPLE_LENGTH * sizeof(short);
-+  nsRefPtr<SharedBuffer> buffer = SharedBuffer::Create(bsize);
++  ReentrantMonitorAutoEnter enter(mMonitor);
 +
-+  int16_t* dest = static_cast<int16_t*>(buffer->Data());
++  nsRefPtr<SharedBuffer> buffer = SharedBuffer::Create(length * sizeof(sample));
++
++  sample* dest = static_cast<sample*>(buffer->Data());
 +  for (int i = 0; i < length; i++) {
 +    dest[i] = audio10ms[i];
 +  }
 +
-+  mAudioSegment.AppendFrames(
++  AudioSegment segment;
++  segment.Init(CHANNELS);
++  segment.AppendFrames(
 +    buffer.forget(), length, 0, length, nsAudioStream::FORMAT_S16_LE
 +  );
-+  mSource->AppendToTrack(mTrackID, &mAudioSegment);
-+  printf("I appended a frame!!\n");
++  mSource->AppendToTrack(mTrackID, &segment);
 +
 +  return;
 +}
@@ -619,7 +624,7 @@ diff --git a/content/media/webrtc/MediaEngineWebRTCVideo.cpp b/content/media/web
 new file mode 100644
 --- /dev/null
 +++ b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,370 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -631,7 +636,7 @@ new file mode 100644
 +/**
 + * Webrtc video source.
 + */
-+NS_IMPL_THREADSAFE_ISUPPORTS0(MediaEngineWebRTCVideoSource)
++NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineWebRTCVideoSource, nsIRunnable)
 +
 +// Static variables to hold device names and UUIDs.
 +const unsigned int MediaEngineWebRTCVideoSource::KMaxDeviceNameLength = 128;
@@ -750,15 +755,16 @@ new file mode 100644
 +    mCapIndex, deviceName, KMaxDeviceNameLength, uniqueId, KMaxUniqueIdLength
 +  );
 +
-+  if (mViECapture->AllocateCaptureDevice(uniqueId, KMaxUniqueIdLength, mCapIndex) == 0) {
-+    mState = kAllocated;
-+    if (mViECapture->StartCapture(mCapIndex) == -1) {
-+      return NULL;
-+    }
-+    return NS_OK;
++  if (mViECapture->AllocateCaptureDevice(uniqueId, KMaxUniqueIdLength, mCapIndex)) {
++    return NS_ERROR_FAILURE;
 +  }
 +
-+  return NS_ERROR_FAILURE;
++  if (mViECapture->StartCapture(mCapIndex) < 0) {
++    return NS_ERROR_FAILURE;
++  }
++
++  mState = kAllocated;
++  return NS_OK;
 +}
 +
 +nsresult
@@ -900,21 +906,18 @@ new file mode 100644
 +    return NS_ERROR_FAILURE;
 +  }
 +
-+  // Create a temporary file and put the snapshot in it.
-+  nsCOMPtr<nsIFile> tmp;
-+  nsresult rv = NS_GetSpecialDirectory("TmpD", getter_AddRefs(tmp));
-+  NS_ENSURE_SUCCESS(rv, rv);
++  // Create a temporary file on the main thread and put the snapshot in it.
++  // See Run() in MediaEngineWebRTCVideo.h (sets mSnapshotPath).
++  NS_DispatchToMainThread(this, NS_DISPATCH_SYNC);
 +
-+  tmp->Append(NS_LITERAL_STRING("webrtc_snapshot.jpeg"));
-+  rv = tmp->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
-+  NS_ENSURE_SUCCESS(rv, rv);
++  if (!mSnapshotPath) {
++    return NS_ERROR_FAILURE;
++  }
 +
-+  nsString unicodePath;
-+  rv = tmp->GetPath(unicodePath);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  const char* path = NS_ConvertUTF16toUTF8(unicodePath).get();
++  const char* path = NS_ConvertUTF16toUTF8(*mSnapshotPath).get();
 +  if (vieFile->GetCaptureDeviceSnapshot(mCapIndex, path) < 0) {
++    delete mSnapshotPath;
++    mSnapshotPath = NULL;
 +    return NS_ERROR_FAILURE;
 +  }
 +
@@ -922,7 +925,15 @@ new file mode 100644
 +  mViERender->StopRender(mCapIndex);
 +  mViERender->RemoveRenderer(mCapIndex);
 +
-+  NS_ADDREF(*aFile = new nsDOMFileFile(tmp));
++  nsCOMPtr<nsIFile> file;
++  nsresult rv = NS_NewLocalFile(*mSnapshotPath, false, getter_AddRefs(file));
++  
++  delete mSnapshotPath;
++  mSnapshotPath = NULL;
++
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  NS_ADDREF(*aFile = new nsDOMFileFile(file));
 +
 +  return NS_OK;
 +}
@@ -958,7 +969,6 @@ new file mode 100644
 +void
 +MediaEngineWebRTCVideoSource::Shutdown()
 +{
-+  int error = 0;
 +  bool continueShutdown = false;
 +
 +  if (!mInitDone) {
@@ -966,15 +976,14 @@ new file mode 100644
 +  }
 +
 +  if (mState == kStarted) {
-+    error = mViERender->StopRender(mCapIndex);
-+    error = mViERender->RemoveRenderer(mCapIndex);
++    mViERender->StopRender(mCapIndex);
++    mViERender->RemoveRenderer(mCapIndex);
 +    continueShutdown = true;
 +  }
 +
-+  error = 0;
 +  if (mState == kAllocated || continueShutdown) {
-+    error = mViECapture->StopCapture(mCapIndex);
-+    error = mViECapture->ReleaseCaptureDevice(mCapIndex);
++    mViECapture->StopCapture(mCapIndex);
++    mViECapture->ReleaseCaptureDevice(mCapIndex);
 +    continueShutdown = false;
 +  }
 +
