@@ -1,0 +1,29 @@
+<html>
+<head>
+  <title>Stream Capture Test</title>
+</head>
+<body>
+  <div>
+    <video width="640" height="480" id="tehvideo"></video><br/>
+    <input type="button" value="Capture" onClick="capture();"></input><br/>
+    <canvas width="640" height="480" id="tehcanvas"></canvas><br/>
+  </div>
+  <script>
+    var video = document.getElementById("tehvideo");
+    var canvas = document.getElementById("tehcanvas");
+
+    navigator.mozGetUserMedia({video:true}, function(stream) {
+      video.src = stream;
+      video.play();
+    }, function(error) {
+      alert("Error! " + error);
+    });
+
+    function capture() {
+      var ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0);
+    }
+
+  </script>
+</body>
+</html>
