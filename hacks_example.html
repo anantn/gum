@@ -1,15 +1,19 @@
-<!doctype html public "✰">
+<!DOCTYPE html>
+
 <html>
 <head>
+  <meta name="generator" content=
+  "HTML Tidy for HTML5 (experimental) for Linux https://github.com/w3c/tidy-html5/tree/68a9e74">
   <meta charset="utf-8">
+
   <title>getUserMedia Video Example</title>
 </head>
-<body>
-  <input type="button" value="Toggle Video" onClick="toggle();" />
-  <video id="video" width="800" height="600" />
 
-  <script type="application/javascript;version=1.7">
-    let streaming = false;
+<body>
+  <button type="button" onclick="toggle()">Toggle Video</button><br>
+  <video id="video" width="800" height="600"> <script type=
+  "application/javascript;version=1.7">
+  let streaming = false;
     let video = document.getElementById("video");
 
     function toggle() {

@@ -1,0 +1,32 @@
+# HG changeset patch
+# Parent 59292ea0661587d7dc9aeafc57a7ee2a9f602801
+# User Anant Narayanan <anant@kix.in>
+
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -122,6 +122,13 @@
+   {
+     // Create a media stream.
+     nsCOMPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateInputStream();
++    
++    nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
++      (nsGlobalWindow::GetOuterWindowWithId(mWindowID));
++
++    if (window && window->GetExtantDoc()) {
++      stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
++    }
+ 
+     // Add our listener. We'll call Start() on the source when get a callback
+     // that the MediaStream has started consuming. The listener is freed
+diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
+--- a/dom/media/MediaManager.h
++++ b/dom/media/MediaManager.h
+@@ -6,6 +6,7 @@
+ #include "mozilla/Services.h"
+ 
+ #include "nsHashKeys.h"
++#include "nsGlobalWindow.h"
+ #include "nsClassHashtable.h"
+ #include "nsObserverService.h"
+ 

@@ -1,3 +1,4 @@
 move_media
 engine_webrtc
 dom_bindings
+stream_principal
