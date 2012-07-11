@@ -5,7 +5,7 @@
     <title>getUserMedia Video Example</title>
   </head>
   <body>
-    <video id="video" width="800" height="600" />
+    <video id="video" width="800" height="600"></video>
     <input type="button" value="Toggle Video" onClick="toggle();" />
   </body>
   <script type="application/javascript;version=1.7">
@@ -13,17 +13,17 @@
     let video = document.getElementById("video");
 
     function toggle() {
-      if (streaming) {
-        video.pause();
-        video.src = null;
-        streaming = false;
+      if (!streaming) {
+        startVideo();
         return;
       }
-      startVideo();
+      video.pause();
+      video.src = null;
+      streaming = false;
     }
 
     function startVideo() {
-      navigator.mozGetUserMedia({video:true}, function(stream) {
+      navigator.mozGetUserMedia({video: true}, function(stream) {
         video.src = stream;
         video.play();
         streaming = true;
