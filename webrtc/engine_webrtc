@@ -1,7 +1,7 @@
 # HG changeset patch
-# Parent 5f06049b9c017084a0cbcbc351f63d0cdd715e77
+# Parent 431ab4d097c9796b81462fce6295d82b655f0cd4
 # User Anant Narayanan <anant@kix.in>
-Add WebRTC MediaEngine implementation
+Bug 691234: Part 2/3: Implement WebRTC backend for MediaEngine on Desktop; r=jesup, r=roc
 
 diff --git a/content/media/webrtc/Makefile.in b/content/media/webrtc/Makefile.in
 --- a/content/media/webrtc/Makefile.in

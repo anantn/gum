@@ -1,12 +1,17 @@
 # HG changeset patch
-# Parent ed1ca956665d444f6a01bf09126b89845b8f2219
+# Parent d85e04ab155167ebc54a3a5f60d025c65bb5cd00
 # User Anant Narayanan <anant@kix.in>
-Add gUM Desktop DOM bindings
+Bug 691234: Part 3/3: Add DOM binding for getUserMedia on Desktop; r=jst
 
 diff --git a/browser/confvars.sh b/browser/confvars.sh
 --- a/browser/confvars.sh
 +++ b/browser/confvars.sh
-@@ -43,3 +43,4 @@
+@@ -38,8 +38,9 @@ MOZ_APP_ID={ec8030f7-c20a-464f-9b0e-13a3
+ # of values.
+ ACCEPTED_MAR_CHANNEL_IDS=firefox-mozilla-central
+ # The MAR_CHANNEL_ID must not contain the following 3 characters: ",\t "
+ MAR_CHANNEL_ID=firefox-mozilla-central
+ MOZ_PROFILE_MIGRATOR=1
  MOZ_EXTENSION_MANAGER=1
  MOZ_APP_STATIC_INI=1
  MOZ_WEBAPP_RUNTIME=1
@@ -14,7 +19,12 @@ diff --git a/browser/confvars.sh b/browser/confvars.sh
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 --- a/dom/media/Makefile.in
 +++ b/dom/media/Makefile.in
-@@ -34,5 +34,9 @@
+@@ -29,10 +29,14 @@ EXPORTS_NAMESPACE = mozilla
+ EXPORTS_mozilla = \
+   MediaManager.h \
+   $(NULL)
+ 
+ CPPSRCS = \
    MediaManager.cpp \
    $(NULL)
  
@@ -27,7 +37,11 @@ diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
 +++ b/dom/media/MediaManager.cpp
-@@ -5,8 +5,6 @@
+@@ -1,26 +1,31 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
  #include "MediaManager.h"
  
  #include "MediaStreamGraph.h"
@@ -36,7 +50,9 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  #include "nsIDOMFile.h"
  #include "nsIEventTarget.h"
  #include "nsIScriptGlobalObject.h"
-@@ -16,6 +14,13 @@
+ #include "nsIPopupWindowManager.h"
+ 
+ #include "nsJSUtils.h"
  #include "nsDOMFile.h"
  #include "nsGlobalWindow.h"
  
@@ -50,16 +66,48 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  namespace mozilla {
  
  /**
-@@ -64,7 +69,7 @@
+  * Send an error back to content. The error is the form a string.
+  * Do this only on the main thread.
+  */
+ class ErrorCallbackRunnable : public nsRunnable
+ {
+@@ -58,224 +63,123 @@ class SuccessCallbackRunnable : public n
+ {
+ public:
+   SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
+     nsIDOMFile* aFile, PRUint64 aWindowID)
+     : mSuccess(aSuccess)
+     , mFile(aFile)
      , mWindowID(aWindowID) {}
  
-   SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
+-  SuccessCallbackRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
 -    nsIDOMMediaStream* aStream, PRUint64 aWindowID)
-+    already_AddRefed<nsDOMMediaStream> aStream, PRUint64 aWindowID)
-     : mSuccess(aSuccess)
-     , mStream(aStream)
-     , mWindowID(aWindowID) {}
-@@ -93,155 +98,66 @@
+-    : mSuccess(aSuccess)
+-    , mStream(aStream)
+-    , mWindowID(aWindowID) {}
+-
+   NS_IMETHOD
+   Run()
+   {
+     // Only run if the window is still active.
+     WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
+     if (activeWindows->Get(mWindowID)) {
+       // XPConnect is a magical unicorn.
+-      if (mFile) {
+-        mSuccess->OnSuccess(mFile);
+-      } else if (mStream) {
+-        mSuccess->OnSuccess(mStream);
+-      }
++      mSuccess->OnSuccess(mFile);
+     }
+     return NS_OK;
+   }
+ 
+ private:
+   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+   nsCOMPtr<nsIDOMFile> mFile;
+-  nsCOMPtr<nsIDOMMediaStream> mStream;
+   PRUint64 mWindowID;
  };
  
  /**
@@ -247,7 +295,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
   */
  class GetUserMediaRunnable : public nsRunnable
  {
-@@ -249,14 +165,14 @@
+ public:
    GetUserMediaRunnable(bool aAudio, bool aVideo, bool aPicture,
      nsIDOMGetUserMediaSuccessCallback* aSuccess,
      nsIDOMGetUserMediaErrorCallback* aError,
@@ -265,7 +313,13 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
    ~GetUserMediaRunnable() {}
  
-@@ -270,7 +186,6 @@
+   // We only support 1 audio and 1 video track for now.
+   enum {
+     kVideoTrack = 1,
+     kAudioTrack = 2
+   };
+ 
+   NS_IMETHOD
    Run()
    {
      mManager = MediaManager::Get();
@@ -273,7 +327,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
      if (mPicture) {
        SendPicture();
-@@ -298,6 +213,60 @@
+       return NS_OK;
+     }
+ 
+     // XXX: Implement merging two streams (See bug 758391).
+     if (mAudio && mVideo) {
+@@ -293,34 +197,89 @@ public:
+     if (mAudio) {
+       SendAudio();
+       return NS_OK;
+     }
+ 
      return NS_OK;
    }
  
@@ -334,7 +398,14 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    // {picture:true}
    void
    SendPicture()
-@@ -312,10 +281,11 @@
+   {
+     nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+     mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
+ 
+     PRUint32 count = videoSources.Length();
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
        ));
        return;
      }
@@ -350,7 +421,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
    // {video:true}
-@@ -333,10 +303,8 @@
+   void
+   SendVideo()
+   {
+     nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+     mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
+@@ -328,20 +287,18 @@ public:
+     PRUint32 count = videoSources.Length();
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+       ));
        return;
      }
  
@@ -363,7 +444,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
    // {audio:true}
-@@ -354,10 +322,8 @@
+   void
+   SendAudio()
+   {
+     nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
+     mManager->GetBackend()->EnumerateAudioDevices(&audioSources);
+@@ -349,34 +306,31 @@ public:
+     PRUint32 count = audioSources.Length();
+     if (!count) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+       ));
        return;
      }
  
@@ -376,7 +467,9 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
  private:
-@@ -367,11 +333,10 @@
+   bool mAudio;
+   bool mVideo;
+   bool mPicture;
  
    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
    nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
@@ -389,7 +482,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  };
  
  
-@@ -390,10 +355,43 @@
+ nsRefPtr<MediaManager> MediaManager::sSingleton;
+ 
+ NS_IMPL_ISUPPORTS1(MediaManager, nsIObserver)
+ 
+ /**
+@@ -385,20 +339,53 @@ NS_IMPL_ISUPPORTS1(MediaManager, nsIObse
+  * for handling all incoming getUserMedia calls from every window.
+  */
+ nsresult
+ MediaManager::GetUserMedia(nsPIDOMWindow* aWindow, nsIMediaStreamOptions* aParams,
+   nsIDOMGetUserMediaSuccessCallback* onSuccess,
    nsIDOMGetUserMediaErrorCallback* onError)
  {
    NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
@@ -433,7 +536,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
    rv = aParams->GetAudio(&audio);
    NS_ENSURE_SUCCESS(rv, rv);
-@@ -415,10 +413,10 @@
+ 
+   rv = aParams->GetVideo(&video);
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+   // We only support "front" or "back". TBD: Send to GetUserMediaRunnable.
+@@ -410,40 +397,45 @@ MediaManager::GetUserMedia(nsPIDOMWindow
+   // when this window is closed or navigated away from.
+   PRUint64 windowID = aWindow->WindowID();
+   StreamListeners* listeners = mActiveWindows.Get(windowID);
+   if (!listeners) {
+     listeners = new StreamListeners;
      mActiveWindows.Put(windowID, listeners);
    }
  
@@ -446,7 +559,15 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    );
  
    // Reuse the same thread to save memory.
-@@ -434,11 +432,16 @@
+   if (!mMediaThread) {
+     rv = NS_NewThread(getter_AddRefs(mMediaThread));
+     NS_ENSURE_SUCCESS(rv, rv);
+   }
+ 
+   mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
+   return NS_OK;
+ }
+ 
  MediaEngine*
  MediaManager::GetBackend()
  {
@@ -465,7 +586,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    return mBackend;
  }
  
-@@ -458,7 +461,6 @@
+ WindowTable*
+ MediaManager::GetActiveWindows()
+ {
+   return &mActiveWindows;
+ }
+@@ -453,17 +445,16 @@ MediaManager::OnNavigation(PRUint64 aWin
+ {
+   // Invalidate this window. The runnables check this value before making
+   // a call to content.
+   StreamListeners* listeners = mActiveWindows.Get(aWindowID);
+   if (!listeners) {
      return;
    }
  
@@ -473,10 +604,20 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    PRUint32 length = listeners->Length();
    for (PRUint32 i = 0; i < length; i++) {
      nsRefPtr<GetUserMediaCallbackMediaStreamListener> listener =
+       listeners->ElementAt(i);
+     listener->Invalidate();
+     listener = nsnull;
+   }
+   listeners->Clear();
 diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 --- a/dom/media/MediaManager.h
 +++ b/dom/media/MediaManager.h
-@@ -27,7 +27,7 @@
+@@ -22,17 +22,17 @@ namespace mozilla {
+  */
+ class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener
+ {
+ public:
+   GetUserMediaCallbackMediaStreamListener(MediaEngineSource* aSource,
      nsDOMMediaStream* aStream, TrackID aListenId)
      : mSource(aSource)
      , mStream(aStream)
@@ -485,7 +626,17 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
      , mValid(true) {}
  
    void
-@@ -46,8 +46,8 @@
+   Invalidate()
+   {
+     if (!mValid) {
+       return;
+     }
+@@ -41,38 +41,37 @@ public:
+     mSource->Stop();
+     mSource->Deallocate();
+   }
+ 
+   void
    NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming)
    {
      if (aConsuming == CONSUMED) {
@@ -496,7 +647,14 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
        return;
      }
  
-@@ -62,12 +62,11 @@
+     // NOT_CONSUMED
+     Invalidate();
+     return;
+   }
+ 
+   void NotifyBlockingChanged(MediaStreamGraph* aGraph, Blocking aBlocked) {}
+   void NotifyOutput(MediaStreamGraph* aGraph) {}
+   void NotifyFinished(MediaStreamGraph* aGraph) {}
    void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
      TrackRate aTrackRate, TrackTicks aTrackOffset,
      PRUint32 aTrackEvents, const MediaSegment& aQueuedMedia) {}
@@ -511,7 +669,17 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
    bool mValid;
  };
  
-@@ -89,10 +88,6 @@
+ typedef nsTArray<nsRefPtr<GetUserMediaCallbackMediaStreamListener> > StreamListeners;
+ typedef nsClassHashtable<nsUint64HashKey, StreamListeners> WindowTable;
+ 
+ class MediaManager MOZ_FINAL : public nsIObserver {
+ public:
+@@ -84,45 +83,38 @@ public:
+       obs->AddObserver(sSingleton, "xpcom-shutdown", false);
+     }
+     return sSingleton;
+   }
+ 
    NS_DECL_ISUPPORTS
    NS_DECL_NSIOBSERVER
  
@@ -522,7 +690,13 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
    MediaEngine* GetBackend();
    WindowTable* GetActiveWindows();
  
-@@ -106,20 +101,17 @@
+   nsresult GetUserMedia(nsPIDOMWindow* aWindow, nsIMediaStreamOptions* aParams,
+     nsIDOMGetUserMediaSuccessCallback* onSuccess,
+     nsIDOMGetUserMediaErrorCallback* onError);
+   void OnNavigation(PRUint64 aWindowID);
+ 
+ private:
+   // Make private because we want only one instance of this class
    MediaManager()
    : mBackend(nsnull)
    , mMediaThread(nsnull) {

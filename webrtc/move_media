@@ -1,9 +1,9 @@
 # HG changeset patch
-# User Crypt <snandaku@cisco.com>
+# User Anant Narayanan <anant@kix.in>
 # Date 1340152183 25200
 # Node ID 4e21996fc0f04223ef1339138b9fcf319d65f530
-# Parent aff063e52fc65bf8bc5b449b4e1ceca477da74b6
- Bug 691234 Webrtc Backend With Basic Snapshot Support and Cleanup
+# Parent 264e13c78feecb5f15c4b411b268330573c0bb59
+Bug 691234: Part 1/3: Move MediaEngine files and tweak interface; r=roc
 
 diff --git a/content/media/Makefile.in b/content/media/Makefile.in
 --- a/content/media/Makefile.in
@@ -274,7 +274,7 @@ rename to content/media/webrtc/MediaEngineDefault.h
 diff --git a/layout/build/Makefile.in b/layout/build/Makefile.in
 --- a/layout/build/Makefile.in
 +++ b/layout/build/Makefile.in
-@@ -124,16 +124,17 @@ SHARED_LIBRARY_LIBS	+= \
+@@ -125,16 +125,17 @@ SHARED_LIBRARY_LIBS	+= \
    $(DEPTH)/dom/system/gonk/$(LIB_PREFIX)domsystemgonk_s.$(LIB_SUFFIX) \
    $(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
    $(NULL)
