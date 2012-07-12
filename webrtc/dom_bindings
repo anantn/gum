@@ -543,3 +543,6 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
    WindowTable mActiveWindows;
  
    static nsRefPtr<MediaManager> sSingleton;
+ };
+ 
+ } // namespace mozilla
