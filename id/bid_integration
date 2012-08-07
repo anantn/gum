@@ -1,10 +1,10 @@
 # HG changeset patch
-# Parent 3a25b126b293cf12569cbec940bfa2366183d783
+# Parent 2570ab2ce58c11270dea131195faf6ea09b7b21a
 
 diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 --- a/dom/media/PeerConnection.js
 +++ b/dom/media/PeerConnection.js
-@@ -1,38 +1,37 @@
+@@ -1,38 +1,40 @@
  /* This Source Code Form is subject to the terms of the Mozilla Public
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,12 +36,15 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
    _observer: null,
 +  _identity: null,
 +
++  // TODO: Refactor this.
    _onCreateOfferSuccess: null,
    _onCreateOfferFailure: null,
    _onCreateAnswerSuccess: null,
    _onCreateAnswerFailure: null,
 +  _onSelectIdentitySuccess: null,
 +  _onSelectIdentityFailure: null,
++  _onVerifyIdentitySuccess: null,
++  _onVerifyIdentityFailure: null,
  
    _ondatachannel: null,
    _onconnection: null,
@@ -50,7 +53,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
    // Everytime we get a request from content, we put it in the queue. If
    // there are no pending operations though, we will execute it immediately.
    // In PeerConnectionObserver, whenever we are notified that an operation
-@@ -42,34 +41,90 @@ PeerConnection.prototype = {
+@@ -42,34 +44,122 @@ PeerConnection.prototype = {
    _queue: [],
    _pending: false,
  
@@ -126,13 +129,45 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 +    });
 +  },
 +
++  _verifyIdentity: function(offer) {
++    let self = this;
++
++    // Extract the a=fingerprint and a=identity lines.
++    let ire = new RegExp("a=identity:(.+)\r\n");
++    let fre = new RegExp("a=fingerprint:(.+)\r\n");
++    
++    let id = offer.match(ire);
++    let fprint = offer.match(fre);
++    
++    if (id.length == 2 && fprint.length == 2) {
++      IDService.verifyIdentity(id[1], function(err, val) {
++        if (val && (fprint[1] == val.message)) {
++          self._onVerifyIdentitySuccess.onCallback(val);
++          return;
++        }
++        self._onVerifyIdentityFailure(err || "Signed message did not match");
++      }); 
++    } else {
++      self._onVerifyIdentityFailure.onCallback("No identity information found");
++    }
++  },
++
 +  selectIdentity: function(onSuccess, onError) {
-+    dump("!!! selectIdentity called with " + onSuccess + " :: " + onError + "\n\n");
++    dump("!!! selectIdentity called\n");
 +    this._onSelectIdentitySuccess = onSuccess;
 +    this._onSelectIdentityFailure = onError;
 +
 +    this._queueOrRun({func: this._selectIdentity, args: null});
 +    dump("!!! selectIdentity returned\n");
++  },
++
++  verifyIdentity: function(offer, onSuccess, onError) {
++    dump("!!! verifyIdentity called with\n");
++    this._onVerifyIdentitySuccess = onSuccess;
++    this._onVerifyIdentityFailure = onError;
++
++    this._queueOrRun({func: this._verifyIdentity, args: [offer]});
++    dump("!!! verifyIdentity returned\n");
 +  },
 +
    createOffer: function(onSuccess, onError, constraints) {
@@ -143,7 +178,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
      // TODO: Implement constraints/hints.
      if (!constraints) {
        constraints = "";
-@@ -199,123 +254,145 @@ PeerConnection.prototype = {
+@@ -199,123 +289,143 @@ PeerConnection.prototype = {
  
  // This is a seperate object because we don't want to expose it to DOM.
  function PeerConnectionObserver(dompc) {
@@ -177,12 +212,10 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 -    this._executeNext();
 +
 +    let sig = this._dompc._pc.fingerprint;
-+    dump("!!! Got fingerprint from PC: " + sig + "\n\n");
 +
 +    // FIXME! Save the origin of the window that created the dompc.
 +    let self = this;
 +    this._dompc._identity.sign("http://example.org", sig, function(e, ast) {
-+      dump("!!! AuthModule.sign returned: " + e + " :: " + ast + "\n");
 +      if (e && self._dompc._onCreateOfferFailure) {
 +        self._dompc._onCreateOfferFailure(e);
 +        self._dompc._executeNext();
@@ -192,12 +225,12 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 +      // Got assertion, add to the SDP along with the fingerprint. We put
 +      // it right at the top, because these must come before the first
 +      // m= line.
-+      let sigline = "a=fingerprint: " + sig + "\r\n";
-+      //let idline = "a=identity: " + ast + "\r\n";
-+      //offer = sigline + idline + offer;
++      let sigline = "a=fingerprint:" + sig + "\r\n";
++      let idline = "a=identity:" + ast + "\r\n";
 +
 +      let parts = offer.split("m=");
-+      let finalOffer = parts[0] + sigline + "m=" + parts[1];
++      let finalOffer = parts[0] + sigline + idline + "m=" + parts[1];
++
 +      dump("!!! Generated final offer: " + finalOffer + "\n\n");
 +      self._dompc._onCreateOfferSuccess.onCallback(finalOffer);
 +      self._dompc._executeNext();
@@ -345,7 +378,7 @@ diff --git a/dom/media/bridge/IPeerConnection.idl b/dom/media/bridge/IPeerConnec
 diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConnection.idl
 --- a/dom/media/nsIDOMRTCPeerConnection.idl
 +++ b/dom/media/nsIDOMRTCPeerConnection.idl
-@@ -46,16 +46,20 @@ interface nsIDOMRTCPeerConnection : nsIS
+@@ -46,16 +46,25 @@ interface nsIDOMRTCPeerConnection : nsIS
    void addIceCandidate(in jsval candidate);
  
    void addStream(in nsIDOMMediaStream stream,
@@ -358,6 +391,11 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
 +  void selectIdentity(in RTCPeerConnectionCallback successCallback,
 +    [optional] in RTCPeerConnectionCallback failureCallback);
 +
++  void verifyIdentity(in jsval offer,
++    in RTCPeerConnectionCallback successCallback,
++    in RTCPeerConnectionCallback failureCallback);
++
++  /* Data channel */
    nsIDOMDataChannel createDataChannel(/* FIX! */);
  
    /* XXX remove these */
@@ -366,6 +404,130 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
  
    attribute nsIDOMEventListener onconnection;
    attribute nsIDOMEventListener onclosedconnection;
+diff --git a/dom/media/tests/local_id_test.html b/dom/media/tests/local_id_test.html
+new file mode 100644
+--- /dev/null
++++ b/dom/media/tests/local_id_test.html
+@@ -0,0 +1,119 @@
++<html>
++<head>
++  <title>Simple WebRTC ID Test</title>
++</head>
++<body>
++
++<h1>Simple WebRTC ID Test</h1>
++<div><audio id="tehaudio" controls></audio></div><br/>
++<div><button id="tehbutton" onClick="start();">Start!</button></div><br/>
++<div id="log"></div>
++<div><audio id="localaudio" muted></audio></div><br/>
++
++<script type="application/javascript;version=1.8">
++  function log(msg) {
++    let div = document.getElementById("log");
++    div.innerHTML = div.innerHTML + "<p>" + msg + "</p>";
++  }
++
++  let audio = document.getElementById("tehaudio");
++  let button = document.getElementById("tehbutton");
++  let localaudio = document.getElementById("localaudio");
++
++  let pc1;
++  let pc2;
++
++  let pc1_offer;
++  let pc2_ answer;
++
++  function failed(code) {
++    log("Failure callback: " + code);
++  }
++
++  // pc1.createOffer finished, call pc1.setLocal
++  function step1(offer) {
++    pc1_offer = offer;
++    pc1.setLocalDescription("offer", offer, step2, failed);
++  }
++
++  // pc1.setLocal finished, call pc2.setRemote
++  function step2() {
++    pc2 = new mozPeerConnection();
++    pc2.addStream(pc2.createFakeMediaStream("audio"));
++
++    pc2.onRemoteStreamAdded = function(obj) {
++      log("pc2 got remote stream from pc1 " + obj.type);
++      audio.src = obj.stream;
++      audio.play();
++    }
++
++    pc2.setRemoteDescription("offer", pc1_offer, step3, failed);
++  };
++
++  // pc2.setRemote finished, verify identity
++  function step3() {
++    pc2.verifyIdentity(pc1_offer, step4, failed);
++  }
++
++  // ID verified, call pc2.createAnswer
++  function step4(identity) {
++    log("pc2 verified identity for <b>" + identity.principal.email + "</b>" +
++        " with fingerprint '" + identity.message + "'");
++    pc2.createAnswer(pc1_offer, step5, failed);
++  }
++
++  // pc2.createAnswer finished, call pc2.setLocal
++  function step5(answer) {
++    pc2_answer = answer;
++    pc2.setLocalDescription("answer", answer, step6, failed);
++  }
++
++  // pc2.setLocal finished, call pc1.setRemote
++  function step6() {
++    pc1.setRemoteDescription("answer", pc2_answer, step7, failed);
++  }
++
++  // pc1.setRemote finished, media should be running!
++  function step7() {
++    log("HIP HIP HOORAY");
++  }
++
++  function start() {
++    button.innerHTML = "Stop!";
++    button.onClick = stop;
++
++    pc1 = new mozPeerConnection();
++    pc1.onRemoteStreamAdded = function(obj) {
++      log("pc1 got remote stream from pc2 " + obj.type);
++    }
++
++    log("About to call getusermedia");
++    navigator.mozGetUserMedia({audio:true}, function(stream) {
++      // Add the stream obtained from gUM to an <audio> element to start
++      // the audio flow. We mute it on this end, and assign the "remote"
++      // stream when it arrives at pc2 to an unmuted <audio>.
++      localaudio.src = stream;
++      localaudio.play();
++
++      pc1.addStream(stream);
++
++      // Select ID, then start the chain.
++      pc1.selectIdentity(function(val) {
++        log("pc1 selectIdentity finished successfully");
++        pc1.createOffer(step1, failed);
++      }, function(err) {
++        log("pc1 got error from selectIdentity: " + err);
++      });
++    }, failed);
++  }
++
++  function stop() {
++    pc1.close();
++    pc2.close();
++
++    button.innerHTML = "Start!";
++    button.onClick = start;
++  }
++</script>
++
++</html>
 diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp
 --- a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp
 +++ b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp

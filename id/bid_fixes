@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent af428c0c7f6943d731da8f44f98d2e17fce95f03
+# Parent 0201d1ce7b7585b22977ab9568e0d377b2c9a15a
 
 diff --git a/browser/modules/SignInToWebsite.jsm b/browser/modules/SignInToWebsite.jsm
 --- a/browser/modules/SignInToWebsite.jsm
@@ -107,3 +107,90 @@ diff --git a/toolkit/identity/Identity.jsm b/toolkit/identity/Identity.jsm
    },
  
  };
+diff --git a/toolkit/identity/WebRTC.jsm b/toolkit/identity/WebRTC.jsm
+--- a/toolkit/identity/WebRTC.jsm
++++ b/toolkit/identity/WebRTC.jsm
+@@ -1,22 +1,23 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ "use strict";
+ 
+-const EXPORTED_SYMBOLS = ["selectIdentity"];
++const EXPORTED_SYMBOLS = ["selectIdentity", "verifyIdentity"];
+ const DEFAULT_IDP = "browserid.org";
+ const DEFAULT_PROTOCOL = "persona";
+ 
+ const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
+ 
+ Cu.import("resource://gre/modules/Services.jsm");
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
++Cu.import("resource://gre/modules/identity/jwcrypto.jsm");
+ Cu.import("resource://gre/modules/identity/Identity.jsm");
+ Cu.import("resource://gre/modules/identity/RelyingParty.jsm");
+ 
+ Cu.import("resource://services-common/utils.js");
+ 
+ function AuthModule(aPeerConnectionId, aIdentity) {
+   // XXX: How do we know aIDP.idp aIDP.origin are valid?
+   this.peerConnectionId = aPeerConnectionId;
+@@ -30,18 +31,58 @@ AuthModule.prototype = {
+   sign: function(aOrigin, aMessage, aCallback) {
+     // XXX need to deal with the case where the cert has expired between
+     // selectIdentity and now
+     RelyingParty._generateAssertion(
+       aOrigin, this.identity, {message:aMessage}, aCallback
+     );
+   },
+   verify: function(aAssertion, aCallback) {
++    // XXX: Use verifyIdentity for now until we get real crypto verification
++  }
++};
+ 
++/**
++ * Verify an identity based on a signature provided by a WEBRTC PeerConnection
++ *
++ * @param aSignature        The signature provided by the remote peer.
++ *        (string)
++ *
++ * @param aCallback         Called after the signature has been verified. First
++ *        (function)        argument will be a string error (if any) or null.
++ *                          If no error, second argument will be a dictionary
++ *                          describing the verified identity (such as the one
++ *                          provided by selectIdentity).
++ */
++let verifyIdentity = function verifyIdentity(aSignature, aCallback) {
++  let parts = aSignature.split(".");
++  if (parts.length != 5) {
++    aCallback(new Error("Invalid signature"), null);
++    return;
+   }
++
++  let pubkey = "blah";
++  let message = JSON.parse(jwcrypto.base64Decode(parts[3]));
++  let assertion = [parts[0], parts[1], parts[2]].join(".");
++
++  jwcrypto.verifyAssertion(assertion, pubkey, function(err, val) {
++    if (err) {
++      aCallback(err, null);
++      return;
++    }
++    let ret = {
++      aud: message.aud,
++      message: message.message,
++      iss: val.iss,
++      exp: val.exp,
++      iat: val.iat,
++      principal: val.principal
++    };
++    aCallback(null, ret);
++  });
+ };
+ 
+ /**
+  * Select an identity for use by a WEBRTC PeerConnection
+  *
+  * @param aPeerConnectionId
+  *        (string)          The unique ID of the PeerConnection.  Something
+  *                          like a uuid would be lovely.
