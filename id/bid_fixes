@@ -1,0 +1,109 @@
+# HG changeset patch
+# Parent af428c0c7f6943d731da8f44f98d2e17fce95f03
+
+diff --git a/browser/modules/SignInToWebsite.jsm b/browser/modules/SignInToWebsite.jsm
+--- a/browser/modules/SignInToWebsite.jsm
++++ b/browser/modules/SignInToWebsite.jsm
+@@ -64,17 +64,17 @@ let SignInToWebsiteUX = {
+         break;
+     }
+   },
+ 
+   /**
+    * The website is requesting login so the user must choose an identity to use.
+    */
+   requestLogin: function SignInToWebsiteUX_requestLogin(aOptions) {
+-    let windowID = aOptions.rpId;
++    let windowID = aOptions.windowId;
+     log("requestLogin", aOptions);
+     let [chromeWin, browserEl] = this._getUIForWindowID(windowID);
+ 
+     // message is not shown in the UI but is required
+     let message = aOptions.origin;
+     let mainAction = {
+       label: chromeWin.gNavigatorBundle.getString("identity.next.label"),
+       accessKey: chromeWin.gNavigatorBundle.getString("identity.next.accessKey"),
+@@ -170,17 +170,17 @@ let SignInToWebsiteUX = {
+     else
+       Logger.reportError("SignInToWebsite", "Could not close window with ID", aAuthId);
+   },
+ 
+   /**
+    * Show a doorhanger indicating the currently logged-in user.
+    */
+   _showLoggedInUI: function _showLoggedInUI(aIdentity, aContext) {
+-    let windowID = aContext.rpId;
++    let windowID = aContext.windowId;
+     log("_showLoggedInUI for ", windowID);
+     let [chromeWin, browserEl] = this._getUIForWindowID(windowID);
+ 
+     let message = chromeWin.gNavigatorBundle.getFormattedString("identity.loggedIn.description",
+                                                           [aIdentity]);
+     let mainAction = {
+       label: chromeWin.gNavigatorBundle.getString("identity.loggedIn.signOut.label"),
+       accessKey: chromeWin.gNavigatorBundle.getString("identity.loggedIn.signOut.accessKey"),
+@@ -191,39 +191,39 @@ let SignInToWebsiteUX = {
+     };
+     let secondaryActions = [];
+     let options = {
+       dismissed: true,
+     };
+     let loggedInNot = chromeWin.PopupNotifications.show(browserEl, "identity-logged-in", message,
+                                                   "identity-notification-icon", mainAction,
+                                                   secondaryActions, options);
+-    loggedInNot.rpId = windowID;
++    loggedInNot.rpId = aContext.rpId;
+   },
+ 
+   /**
+    * Remove the doorhanger indicating the currently logged-in user.
+    */
+   _removeLoggedInUI: function _removeLoggedInUI(aContext) {
+-    let windowID = aContext.rpId;
++    let windowID = aContext.windowId;
+     log("_removeLoggedInUI for ", windowID);
+     if (!windowID)
+       throw "_removeLoggedInUI: Invalid RP ID";
+     let [chromeWin, browserEl] = this._getUIForWindowID(windowID);
+ 
+     let loggedInNot = chromeWin.PopupNotifications.getNotification("identity-logged-in", browserEl);
+     if (loggedInNot)
+       chromeWin.PopupNotifications.remove(loggedInNot);
+   },
+ 
+   /**
+    * Remove the doorhanger indicating the currently logged-in user.
+    */
+   _removeRequestUI: function _removeRequestUI(aContext) {
+-    let windowID = aContext.rpId;
++    let windowID = aContext.windowId;
+     log("_removeRequestUI for ", windowID);
+     let [chromeWin, browserEl] = this._getUIForWindowID(windowID);
+ 
+     let requestNot = chromeWin.PopupNotifications.getNotification("identity-request", browserEl);
+     if (requestNot)
+       chromeWin.PopupNotifications.remove(requestNot);
+   },
+ 
+diff --git a/toolkit/identity/Identity.jsm b/toolkit/identity/Identity.jsm
+--- a/toolkit/identity/Identity.jsm
++++ b/toolkit/identity/Identity.jsm
+@@ -311,17 +311,17 @@ IDService.prototype = {
+         // Yay.  Valid IdP configuration for the domain.
+         return aCallback(null, callbackObj);
+ 
+       } catch (err) {
+         reportError("_fetchWellKnownFile", "Bad configuration from", aDomain, err);
+         return aCallback(err.toString());
+       }
+     };
+-    req.onerror = function _fetchWellKnownFile_onerror() {
++    req.onerror = function _fetchWellKnownFile_onerror(err) {
+       log("_fetchWellKnownFile", "ERROR:", req.status, req.statusText);
+       log("ERROR: _fetchWellKnownFile:", err);
+       return aCallback("Error");
+     };
+     req.send(null);
+   },
+ 
+ };

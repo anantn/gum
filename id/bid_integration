@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 050f4d5a5b8a7866b97652bf949b71f4b6f1a100
+# Parent 3a25b126b293cf12569cbec940bfa2366183d783
 
 diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 --- a/dom/media/PeerConnection.js
@@ -50,7 +50,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
    // Everytime we get a request from content, we put it in the queue. If
    // there are no pending operations though, we will execute it immediately.
    // In PeerConnectionObserver, whenever we are notified that an operation
-@@ -42,34 +41,89 @@ PeerConnection.prototype = {
+@@ -42,34 +41,90 @@ PeerConnection.prototype = {
    _queue: [],
    _pending: false,
  
@@ -117,16 +117,17 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 +
 +    IDService.selectIdentity(this._uniqId, this._winID, function(err, val) {
 +      if (err) {
-+        self._onSelectIdentityFailure(err);
++        self._onSelectIdentityFailure.onCallback(err);
 +      } else {
 +        self._identity = val;
++        self._onSelectIdentitySuccess.onCallback(null);
 +      }
 +      self._executeNext();
 +    });
 +  },
 +
 +  selectIdentity: function(onSuccess, onError) {
-+    dump("!!! selectIdentity called\n");
++    dump("!!! selectIdentity called with " + onSuccess + " :: " + onError + "\n\n");
 +    this._onSelectIdentitySuccess = onSuccess;
 +    this._onSelectIdentityFailure = onError;
 +
@@ -142,7 +143,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
      // TODO: Implement constraints/hints.
      if (!constraints) {
        constraints = "";
-@@ -199,123 +253,145 @@ PeerConnection.prototype = {
+@@ -199,123 +254,145 @@ PeerConnection.prototype = {
  
  // This is a seperate object because we don't want to expose it to DOM.
  function PeerConnectionObserver(dompc) {
@@ -164,10 +165,6 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
    onCreateOfferSuccess: function(offer) {
      dump("!!! onCreateOfferSuccess called\n");
 -    if (this._dompc._onCreateOfferSuccess) {
-+    if (!this._dompc._onCreateOfferSuccess) {
-+      this._dompc._executeNext();
-+      return;
-+    }
 +
 +    // Before calling the success callback, check if selectIdentity was
 +    // previously called and that an identity was obtained. If so, add
@@ -180,11 +177,12 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 -    this._executeNext();
 +
 +    let sig = this._dompc._pc.fingerprint;
++    dump("!!! Got fingerprint from PC: " + sig + "\n\n");
 +
 +    // FIXME! Save the origin of the window that created the dompc.
 +    let self = this;
 +    this._dompc._identity.sign("http://example.org", sig, function(e, ast) {
-+      dump("!!! AuthModule.sign returned: " + e + " :: " + ast);
++      dump("!!! AuthModule.sign returned: " + e + " :: " + ast + "\n");
 +      if (e && self._dompc._onCreateOfferFailure) {
 +        self._dompc._onCreateOfferFailure(e);
 +        self._dompc._executeNext();
@@ -195,10 +193,13 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 +      // it right at the top, because these must come before the first
 +      // m= line.
 +      let sigline = "a=fingerprint: " + sig + "\r\n";
-+      let idline = "a=identity: " + ast + "\r\n";
-+      offer = sigline + idline + offer;
++      //let idline = "a=identity: " + ast + "\r\n";
++      //offer = sigline + idline + offer;
 +
-+      self._dompc._onCreateOfferSuccess.onCallback(offer);
++      let parts = offer.split("m=");
++      let finalOffer = parts[0] + sigline + "m=" + parts[1];
++      dump("!!! Generated final offer: " + finalOffer + "\n\n");
++      self._dompc._onCreateOfferSuccess.onCallback(finalOffer);
 +      self._dompc._executeNext();
 +    });
    },
@@ -368,7 +369,25 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
 diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp
 --- a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp
 +++ b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp
-@@ -827,16 +827,29 @@ PeerConnectionImpl::CloseStreams() {
+@@ -276,16 +276,17 @@ std::map<const std::string, PeerConnecti
+ 
+ NS_IMPL_THREADSAFE_ISUPPORTS1(PeerConnectionImpl, IPeerConnection)
+ 
+ PeerConnectionImpl::PeerConnectionImpl()
+ : mRole(kRoleUnknown)
+   , mCall(NULL)
+   , mReadyState(kNew)
+   , mPCObserver(NULL)
++  , mFingerprint("TempFingerprint")
+   , mLocalSourceStreamsLock(PR_NewLock())
+   , mIceCtx(NULL)
+   , mIceStreams(NULL)
+   , mIceState(kIceGathering)
+   , mIdentity(NULL)
+  {}
+ 
+ PeerConnectionImpl::~PeerConnectionImpl()
+@@ -827,16 +828,31 @@ PeerConnectionImpl::CloseStreams() {
  NS_IMETHODIMP
  PeerConnectionImpl::AddIceCandidate(const char* strCandidate)
  {
@@ -382,9 +401,11 @@ diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/
 +  if (!mIdentity) {
 +    return NS_ERROR_FAILURE;
 +  }
-+  // Stubbing it out for now.
-+  char* tmp = new char[7];
-+  tmp = "foobar\0";
++
++  char* tmp = new char[mFingerprint.size() + 1];
++  std::copy(mFingerprint.begin(), mFingerprint.end(), tmp);
++  tmp[mFingerprint.size()] = '\0';
++
 +  *fingerprint = tmp;
 +  return NS_OK;
 +}
@@ -398,3 +419,75 @@ diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/
  
    *sdp = tmp;
    return NS_OK;
+diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.h b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.h
+--- a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.h
++++ b/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.h
+@@ -348,16 +348,19 @@ private:
+ 
+   // The SDP sent in from JS - here for debugging.
+   std::string mLocalRequestedSDP;
+   std::string mRemoteRequestedSDP;
+   // The SDP we are using.
+   std::string mLocalSDP;
+   std::string mRemoteSDP;
+ 
++  // DTLS fingerprint, fake it for now.
++  std::string mFingerprint;
++
+   // A list of streams returned from GetUserMedia
+   PRLock *mLocalSourceStreamsLock;
+   nsTArray<nsRefPtr<LocalSourceStreamInfo> > mLocalSourceStreams;
+ 
+   // A list of streams provided by the other side
+   PRLock *mRemoteSourceStreamsLock;
+   nsTArray<nsRefPtr<RemoteSourceStreamInfo> > mRemoteSourceStreams;
+ 
+diff --git a/media/webrtc/signaling/src/sipcc/core/gsm/fsmdef.c b/media/webrtc/signaling/src/sipcc/core/gsm/fsmdef.c
+--- a/media/webrtc/signaling/src/sipcc/core/gsm/fsmdef.c
++++ b/media/webrtc/signaling/src/sipcc/core/gsm/fsmdef.c
+@@ -3078,39 +3078,41 @@ fsmdef_ev_setlocaldesc(sm_event_t *event
+         
+         cause = gsmsdp_encode_sdp(dcb->sdp, &msg_body);
+         if (cause != CC_CAUSE_OK) {
+             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
+             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETLOCALDESCERROR);
+             return (SM_RC_END);	
+         }     
+         
+-        /*compare and fail if different */
++        /* compare and fail if different:
++         * anant: Why? The JS should be able to modify the SDP. Commenting out for now (same for answer)
+         if (strcmp(msg_body.parts[0].body, sdp) != 0) {
+         	ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SDPCHANGED);
+         	return (SM_RC_END);
+         }
+-        
++        */
++
+         fsm_change_state(fcb, __LINE__, FSMDEF_S_CALL_SENT);
+ 
+     } else if (JSEP_ANSWER == action) {
+     
+     	/* compare SDP generated from CreateAnswer */
+         cause = gsmsdp_encode_sdp(dcb->sdp, &msg_body);
+         if (cause != CC_CAUSE_OK) {
+             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
+             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETLOCALDESCERROR);
+             return (SM_RC_END);
+         }     
+         
+-        /* compare and fail if different */
++        /* compare and fail if different
+         if (strcmp(msg_body.parts[0].body, sdp) != 0) {
+             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SDPCHANGED);
+             return (SM_RC_END);
+-        }
++        }*/
+ 
+         FSM_SET_FLAGS(dcb->msgs_sent, FSMDEF_MSG_CONNECTED);
+ 
+         
+         cc_call_state(dcb->call_id, dcb->line, CC_STATE_ANSWERED,
+         	          FSMDEF_CC_CALLER_ID);
+ 
+         fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTING);
