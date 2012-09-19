@@ -1,10 +1,28 @@
 # HG changeset patch
-# Parent 5a416b380f4a7a4cd2c1496983ce9467221adc2f
+# Parent e161d18990dc4abbe263076745686a7aee201f31
 
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 --- a/dom/base/Navigator.cpp
 +++ b/dom/base/Navigator.cpp
-@@ -924,17 +924,17 @@ NS_IMETHODIMP Navigator::GetDeviceStorag
+@@ -108,16 +108,17 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigator)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMClientInformation)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDeviceStorage)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorGeolocation)
+   NS_INTERFACE_MAP_ENTRY(nsINavigatorBattery)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_MEDIA_NAVIGATOR
++  NS_INTERFACE_MAP_ENTRY(nsINavigatorUserMedia)
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
+ #endif
+ #ifdef MOZ_B2G_RIL
+   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
+ #endif
+   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
+ #ifdef MOZ_B2G_RIL
+   NS_INTERFACE_MAP_ENTRY(nsIMozNavigatorMobileConnection)
+@@ -934,17 +935,17 @@ NS_IMETHODIMP Navigator::GetDeviceStorag
    nsRefPtr<nsDOMDeviceStorage> storage;
    nsDOMDeviceStorage::CreateDeviceStoragesFor(win, aType, getter_AddRefs(storage));
  
@@ -23,10 +41,19 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  //*****************************************************************************
  
  NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
-@@ -979,25 +979,64 @@ NS_IMETHODIMP
+@@ -982,32 +983,55 @@ NS_IMETHODIMP Navigator::GetGeolocation(
+ }
+ 
+ //*****************************************************************************
+ //    Navigator::nsIDOMNavigatorUserMedia (mozGetUserMedia)
+ //*****************************************************************************
+ #ifdef MOZ_MEDIA_NAVIGATOR
+ NS_IMETHODIMP
  Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
-                            nsIDOMGetUserMediaSuccessCallback* onSuccess,
-                            nsIDOMGetUserMediaErrorCallback* onError)
+-                           nsIDOMGetUserMediaSuccessCallback* onSuccess,
+-                           nsIDOMGetUserMediaErrorCallback* onError)
++                           nsIDOMGetUserMediaSuccessCallback* aOnSuccess,
++                           nsIDOMGetUserMediaErrorCallback* aOnError)
  {
    if (!Preferences::GetBool("media.navigator.enabled", false)) {
      return NS_OK;
@@ -41,24 +68,18 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
    }
  
 -  return manager->GetUserMedia(win, aParams, onSuccess, onError);
-+  /* Check if the caller is chrome privileged */
-+  nsresult rv;
-+  bool privileged;
-+  nsCOMPtr<nsIScriptSecurityManager> securityManager =
-+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  nsIPrincipal* principal = win->GetExtantDoc()->NodePrincipal();
-+  rv = securityManager->IsSystemPrincipal(principal, &privileged);
-+  NS_ENSURE_SUCCESS(rv, rv);
++  bool privileged = nsContentUtils::IsChromeDoc(win->GetExtantDoc());
 +
 +  MediaManager *manager = MediaManager::Get();
-+  return manager->GetUserMedia(privileged, win, aParams, onSuccess, onError);
++  return manager->GetUserMedia(privileged, win, aParams, aOnSuccess, aOnError);
 +}
 +
++//*****************************************************************************
++//    Navigator::nsINavigatorUserMedia (mozGetUserMediaDevices)
++//*****************************************************************************
 +NS_IMETHODIMP
-+Navigator::MozGetUserMediaDevices(nsIDOMGetUserMediaDevicesSuccessCallback* onSuccess,
-+                                  nsIDOMGetUserMediaErrorCallback* onError)
++Navigator::MozGetUserMediaDevices(nsIGetUserMediaDevicesSuccessCallback* aOnSuccess,
++                                  nsIDOMGetUserMediaErrorCallback* aOnError)
 +{
 +  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
 +  if (!win || !win->GetOuterWindow() ||
@@ -66,23 +87,13 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +    return NS_ERROR_NOT_AVAILABLE;
 +  }
 +
-+  /* Check if the caller is chrome privileged */
-+  nsresult rv;
-+  bool privileged;
-+  nsCOMPtr<nsIScriptSecurityManager> securityManager =
-+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  nsIPrincipal* principal = win->GetExtantDoc()->NodePrincipal();
-+  rv = securityManager->IsSystemPrincipal(principal, &privileged);
-+  NS_ENSURE_SUCCESS(rv, rv);
-+
-+  if (!privileged) {
++  // Check if the caller is chrome privileged, bail if not
++  if (!nsContentUtils::IsChromeDoc(win->GetExtantDoc())) {
 +    return NS_ERROR_FAILURE;
 +  }
 +
 +  MediaManager *manager = MediaManager::Get();
-+  return manager->GetUserMediaDevices(win, onSuccess, onError);
++  return manager->GetUserMediaDevices(win, aOnSuccess, aOnError);
  }
  #endif
  
@@ -91,6 +102,66 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
  //*****************************************************************************
  
  NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aRetVal)
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -82,16 +82,17 @@ class TimeManager;
+ class Navigator : public nsIDOMNavigator
+                 , public nsIDOMClientInformation
+                 , public nsIDOMNavigatorDeviceStorage
+                 , public nsIDOMNavigatorGeolocation
+                 , public nsIDOMNavigatorDesktopNotification
+                 , public nsINavigatorBattery
+                 , public nsIDOMMozNavigatorSms
+ #ifdef MOZ_MEDIA_NAVIGATOR
++                , public nsINavigatorUserMedia
+                 , public nsIDOMNavigatorUserMedia
+ #endif
+ #ifdef MOZ_B2G_RIL
+                 , public nsIDOMNavigatorTelephony
+ #endif
+                 , public nsIDOMMozNavigatorNetwork
+ #ifdef MOZ_B2G_RIL
+                 , public nsIMozNavigatorMobileConnection
+@@ -111,16 +112,17 @@ public:
+   NS_DECL_NSIDOMNAVIGATOR
+   NS_DECL_NSIDOMCLIENTINFORMATION
+   NS_DECL_NSIDOMNAVIGATORDEVICESTORAGE
+   NS_DECL_NSIDOMNAVIGATORGEOLOCATION
+   NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
+   NS_DECL_NSINAVIGATORBATTERY
+   NS_DECL_NSIDOMMOZNAVIGATORSMS
+ #ifdef MOZ_MEDIA_NAVIGATOR
++  NS_DECL_NSINAVIGATORUSERMEDIA
+   NS_DECL_NSIDOMNAVIGATORUSERMEDIA
+ #endif
+ #ifdef MOZ_B2G_RIL
+   NS_DECL_NSIDOMNAVIGATORTELEPHONY
+ #endif
+   NS_DECL_NSIDOMMOZNAVIGATORNETWORK
+ #ifdef MOZ_B2G_RIL
+   NS_DECL_NSIMOZNAVIGATORMOBILECONNECTION
+diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
+--- a/dom/base/nsDOMClassInfo.cpp
++++ b/dom/base/nsDOMClassInfo.cpp
+@@ -2480,16 +2480,17 @@ nsDOMClassInfo::Init()
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorGeolocation)
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMNavigatorDesktopNotification,
+                                         Navigator::HasDesktopNotificationSupport())
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMClientInformation)
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsINavigatorBattery,
+                                         battery::BatteryManager::HasSupport())
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozNavigatorSms)
+ #ifdef MOZ_MEDIA_NAVIGATOR
++    DOM_CLASSINFO_MAP_ENTRY(nsINavigatorUserMedia)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorUserMedia)
+ #endif
+ #ifdef MOZ_B2G_RIL
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorTelephony)
+ #endif
+     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMMozNavigatorNetwork,
+                                         network::IsAPIEnabled())
+ #ifdef MOZ_B2G_RIL
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
 +++ b/dom/media/MediaManager.cpp
@@ -112,7 +183,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  #if defined(MOZ_WEBRTC)
  #include "MediaEngineWebRTC.h"
  #else
-@@ -82,16 +83,67 @@ public:
+@@ -82,16 +83,86 @@ public:
  
  private:
    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
@@ -127,29 +198,48 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +class DeviceSuccessCallbackRunnable: public nsRunnable
 +{
 +public:
-+  DeviceSuccessCallbackRunnable(nsIDOMGetUserMediaDevicesSuccessCallback* aSuccess,
-+    nsIDOMMediaDevice** aDevices, int aCount)
++  DeviceSuccessCallbackRunnable(nsIGetUserMediaDevicesSuccessCallback* aSuccess,
++    const nsTArray<nsCOMPtr<nsIMediaDevice> >& aDevices)
 +    : mSuccess(aSuccess)
-+    , mDevices(aDevices)
-+    , mCount(aCount) {}
++    , mDevices(aDevices) {}
 +
 +  NS_IMETHOD
 +  Run()
 +  {
-+    mSuccess->OnSuccess(mDevices, mCount);
++    nsCOMPtr<nsIWritableVariant> devices =
++      do_CreateInstance("@mozilla.org/variant;1");
++
++    int32_t len = mDevices.Length();
++    if (len == 0) {
++      devices->SetAsEmptyArray();
++      mSuccess->OnSuccess(devices);
++      return NS_OK;
++    }
++
++    nsTArray<nsIMediaDevice*> tmp(len);
++    for (int32_t i = 0; i < len; i++) {
++      tmp.AppendElement(mDevices.ElementAt(i));
++    }
++
++    devices->SetAsArray(nsIDataType::VTYPE_INTERFACE,
++                        &NS_GET_IID(nsIMediaDevice),
++                        mDevices.Length(),
++                        const_cast<void*>(
++                          static_cast<const void*>(tmp.Elements())
++                        ));
++    mSuccess->OnSuccess(devices);
 +    return NS_OK;
 +  }
 +
 +private:
-+  nsCOMPtr<nsIDOMGetUserMediaDevicesSuccessCallback> mSuccess;
-+  nsIDOMMediaDevice** mDevices;
-+  int mCount;
++  nsCOMPtr<nsIGetUserMediaDevicesSuccessCallback> mSuccess;
++  nsTArray<nsCOMPtr<nsIMediaDevice> > mDevices;
 +};
 +
 +/**
-+ * nsIDOMMediaDevice implementation.
++ * nsIMediaDevice implementation.
 + */
-+NS_IMPL_THREADSAFE_ISUPPORTS1(MediaDevice, nsIDOMMediaDevice)
++NS_IMPL_THREADSAFE_ISUPPORTS1(MediaDevice, nsIMediaDevice)
 +
 +NS_IMETHODIMP
 +MediaDevice::GetName(nsAString& aName)
@@ -180,7 +270,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  class GetUserMediaStreamRunnable : public nsRunnable
  {
  public:
-@@ -153,90 +205,143 @@ private:
+@@ -153,90 +224,143 @@ private:
   * are sent back to the DOM.
   *
   * Do not run this on the main thread. The success and error callbacks *MUST*
@@ -340,7 +430,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        return;
      }
  
-@@ -256,191 +361,247 @@ public:
+@@ -256,191 +380,247 @@ public:
      nsresult rv = aSource->Allocate();
      if (NS_FAILED(rv)) {
        NS_DispatchToMainThread(new ErrorCallbackRunnable(
@@ -439,13 +529,13 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +/**
 + * Similar to GetUserMediaRunnable, but used for the chrome-only
 + * GetUserMediaDevices function. Enumerates a list of audio & video devices,
-+ * wraps them up in nsIDOMMediaDevice objects and returns it to the success
++ * wraps them up in nsIMediaDevice objects and returns it to the success
 + * callback.
 + */
 +class GetUserMediaDevicesRunnable : public nsRunnable
 +{
 +public:
-+  GetUserMediaDevicesRunnable(nsIDOMGetUserMediaDevicesSuccessCallback* aSuccess,
++  GetUserMediaDevicesRunnable(nsIGetUserMediaDevicesSuccessCallback* aSuccess,
 +    nsIDOMGetUserMediaErrorCallback* aError)
 +    : mSuccess(aSuccess)
 +    , mError(aError) {}
@@ -466,25 +556,25 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    audioCount = videoSources.Length();
 +
 +    total = videoCount + audioCount;
-+    // FIXME: This leaks. Is the only other way to create an array wrapper?
-+    nsIDOMMediaDevice** devices =
-+      (nsIDOMMediaDevice**) PR_Calloc(total, sizeof(nsIDOMMediaDevice*));
++
++    nsTArray<nsCOMPtr<nsIMediaDevice> > *devices =
++      new nsTArray<nsCOMPtr<nsIMediaDevice> >;
 +
 +    for (i = 0; i < videoCount; i++) {
-+      devices[i] = new MediaDevice(videoSources[i]);
++      devices->AppendElement(new MediaDevice(videoSources[i]));
 +    }
 +    for (i = 0; i < audioCount; i++) {
-+      devices[videoCount + i] = new MediaDevice(audioSources[i]);
++      devices->AppendElement(new MediaDevice(audioSources[i]));
 +    }
 +
 +    NS_DispatchToMainThread(new DeviceSuccessCallbackRunnable(
-+      mSuccess, devices, total
++      mSuccess, *devices
 +    ));
 +    return NS_OK;
 +  }
 +
 +private:
-+  nsCOMPtr<nsIDOMGetUserMediaDevicesSuccessCallback> mSuccess;
++  nsCOMPtr<nsIGetUserMediaDevicesSuccessCallback> mSuccess;
 +  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 +};
  
@@ -500,10 +590,12 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
   */
  nsresult
 -MediaManager::GetUserMedia(nsPIDOMWindow* aWindow, nsIMediaStreamOptions* aParams,
+-  nsIDOMGetUserMediaSuccessCallback* onSuccess,
+-  nsIDOMGetUserMediaErrorCallback* onError)
 +MediaManager::GetUserMedia(bool aPrivileged, nsPIDOMWindow* aWindow,
 +  nsIMediaStreamOptions* aParams,
-   nsIDOMGetUserMediaSuccessCallback* onSuccess,
-   nsIDOMGetUserMediaErrorCallback* onError)
++  nsIDOMGetUserMediaSuccessCallback* aOnSuccess,
++  nsIDOMGetUserMediaErrorCallback* aOnError)
  {
    NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
    NS_ENSURE_TRUE(aWindow, NS_ERROR_NULL_POINTER);
@@ -522,7 +614,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
-+  nsIDOMMediaDevice* device;
++  nsIMediaDevice* device;
 +  rv = aParams->GetDevice(&device);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
@@ -620,12 +712,12 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  nsCOMPtr<nsIRunnable> gUMRunnable;
 +  if (device) {
 +    gUMRunnable = new GetUserMediaRunnable(
-+      audio, video, picture, onSuccess, onError, listeners, windowID,
++      audio, video, picture, aOnSuccess, aOnError, listeners, windowID,
 +      (MediaDevice*) device
 +    );
 +  } else {
 +    gUMRunnable = new GetUserMediaRunnable(
-+      audio, video, picture, onSuccess, onError, listeners, windowID
++      audio, video, picture, aOnSuccess, aOnError, listeners, windowID
 +    );
 +  }
  
@@ -646,11 +738,11 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
 +nsresult
 +MediaManager::GetUserMediaDevices(nsPIDOMWindow* aWindow,
-+  nsIDOMGetUserMediaDevicesSuccessCallback* onSuccess,
-+  nsIDOMGetUserMediaErrorCallback* onError)
++  nsIGetUserMediaDevicesSuccessCallback* aOnSuccess,
++  nsIDOMGetUserMediaErrorCallback* aOnError)
 +{
 +  nsCOMPtr<nsIRunnable> gUMDRunnable = new GetUserMediaDevicesRunnable(
-+    onSuccess, onError
++    aOnSuccess, aOnError
 +  );
 +
 +  nsCOMPtr<nsIThread> deviceThread;
@@ -672,7 +764,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 --- a/dom/media/MediaManager.h
 +++ b/dom/media/MediaManager.h
-@@ -112,16 +112,40 @@ private:
+@@ -112,17 +112,43 @@ private:
    nsCOMPtr<nsDOMMediaStream> mStream;
    TrackID mID;
    bool mValid;
@@ -681,10 +773,12 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
  typedef nsTArray<nsRefPtr<GetUserMediaCallbackMediaStreamListener> > StreamListeners;
  typedef nsClassHashtable<nsUint64HashKey, StreamListeners> WindowTable;
  
-+class MediaDevice : public nsIDOMMediaDevice {
+-class MediaManager MOZ_FINAL : public nsIObserver {
++class MediaDevice : public nsIMediaDevice
++{
 +public:
 +  NS_DECL_ISUPPORTS
-+  NS_DECL_NSIDOMMEDIADEVICE
++  NS_DECL_NSIMEDIADEVICE
 +
 +  MediaDevice(MediaEngineVideoSource* aSource) {
 +    mSource = aSource;
@@ -705,7 +799,8 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 +  nsRefPtr<MediaEngineSource> mSource;
 +};
 +
- class MediaManager MOZ_FINAL : public nsIObserver {
++class MediaManager MOZ_FINAL : public nsIObserver
++{
  public:
    static MediaManager* Get() {
      if (!sSingleton) {
@@ -713,7 +808,8 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
  
        nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
        obs->AddObserver(sSingleton, "xpcom-shutdown", false);
-@@ -130,19 +154,23 @@ public:
+     }
+@@ -130,19 +156,23 @@ public:
    }
  
    NS_DECL_ISUPPORTS
@@ -728,7 +824,7 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
      nsIDOMGetUserMediaSuccessCallback* onSuccess,
      nsIDOMGetUserMediaErrorCallback* onError);
 +  nsresult GetUserMediaDevices(nsPIDOMWindow* aWindow,
-+    nsIDOMGetUserMediaDevicesSuccessCallback* onSuccess,
++    nsIGetUserMediaDevicesSuccessCallback* onSuccess,
 +    nsIDOMGetUserMediaErrorCallback* onError);
    void OnNavigation(uint64_t aWindowID);
  
@@ -747,20 +843,20 @@ diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorU
   * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  #include "nsISupports.idl"
++#include "nsIVariant.idl"
  #include "nsIDOMMediaStream.idl"
  
 +[scriptable, builtinclass, uuid(6de854f9-acf8-4383-b464-4803631ef309)]
-+interface nsIDOMMediaDevice : nsISupports
++interface nsIMediaDevice : nsISupports
 +{
 +  readonly attribute DOMString type;
 +  readonly attribute DOMString name;
 +};
 +
 +[scriptable, function, uuid(24544878-d35e-4962-8c5f-fb84e97bdfee)]
-+interface nsIDOMGetUserMediaDevicesSuccessCallback : nsISupports
++interface nsIGetUserMediaDevicesSuccessCallback : nsISupports
 +{
-+  void onSuccess([array, size_is(count)] in nsIDOMMediaDevice devices,
-+    in unsigned long count);
++  void onSuccess(in nsIVariant devices);
 +};
 +
  [scriptable, function, uuid(f2a144fc-3534-4761-8c5d-989ae720f89a)]
@@ -771,7 +867,7 @@ diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorU
     * nsIDOMMediaStream if either audio or video are true.
     */
    void onSuccess(in nsISupports value);
-@@ -23,17 +37,22 @@ interface nsIDOMGetUserMediaErrorCallbac
+@@ -23,17 +37,26 @@ interface nsIDOMGetUserMediaErrorCallbac
  
  [scriptable, uuid(8a26205e-e8f7-4372-bd15-97ff982b4c1c)]
  interface nsIMediaStreamOptions : nsISupports
@@ -780,7 +876,7 @@ diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorU
    readonly attribute boolean video;
    readonly attribute boolean picture;
    readonly attribute DOMString camera;
-+  readonly attribute nsIDOMMediaDevice device;
++  readonly attribute nsIMediaDevice device;
  };
  
 -[scriptable, uuid(381e0071-0be5-4f6b-ae21-8e3407a37faa)]
@@ -790,8 +886,12 @@ diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorU
    void mozGetUserMedia(in nsIMediaStreamOptions params,
      in nsIDOMGetUserMediaSuccessCallback onsuccess,
      in nsIDOMGetUserMediaErrorCallback onerror);
-+
-+  void mozGetUserMediaDevices(
-+    in nsIDOMGetUserMediaDevicesSuccessCallback onsuccess,
-+    in nsIDOMGetUserMediaErrorCallback onerror);
  };
++
++[scriptable, uuid(20e9c794-fdfe-43f4-a81b-ebd9069e0af1)]
++interface nsINavigatorUserMedia : nsISupports
++{
++  void mozGetUserMediaDevices(
++    in nsIGetUserMediaDevicesSuccessCallback onsuccess,
++    in nsIDOMGetUserMediaErrorCallback onerror);
++};
