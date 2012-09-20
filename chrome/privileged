@@ -165,25 +165,7 @@ diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
 +++ b/dom/media/MediaManager.cpp
-@@ -5,16 +5,17 @@
- #include "MediaManager.h"
- 
- #include "MediaStreamGraph.h"
- #include "nsIDOMFile.h"
- #include "nsIEventTarget.h"
- #include "nsIScriptGlobalObject.h"
- #include "nsIPopupWindowManager.h"
- 
-+#include "prmem.h"
- #include "nsJSUtils.h"
- #include "nsDOMFile.h"
- #include "nsGlobalWindow.h"
- 
- /* Using WebRTC backend on Desktops (Mac, Windows, Linux), otherwise default */
- #if defined(MOZ_WEBRTC)
- #include "MediaEngineWebRTC.h"
- #else
-@@ -25,26 +26,27 @@ namespace mozilla {
+@@ -25,26 +25,27 @@ namespace mozilla {
  
  /**
   * Send an error back to content. The error is the form a string.
@@ -212,7 +194,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    }
  
  private:
-@@ -57,41 +59,116 @@ private:
+@@ -57,41 +58,116 @@ private:
   * Invoke the "onSuccess" callback in content. The callback will take a
   * DOMBlob in the case of {picture:true}, and a MediaStream in the case of
   * {audio:true} or {video:true}. There is a constructor available for each
@@ -330,7 +312,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  class GetUserMediaStreamRunnable : public nsRunnable
  {
  public:
-@@ -104,16 +181,18 @@ public:
+@@ -104,16 +180,18 @@ public:
      , mWindowID(aWindowID)
      , mTrackID(aTrackID) {}
  
@@ -349,7 +331,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
      if (window && window->GetExtantDoc()) {
        stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
-@@ -153,90 +232,145 @@ private:
+@@ -153,90 +231,145 @@ private:
   * are sent back to the DOM.
   *
   * Do not run this on the main thread. The success and error callbacks *MUST*
@@ -513,7 +495,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        return;
      }
  
-@@ -256,191 +390,262 @@ public:
+@@ -256,191 +389,262 @@ public:
      nsresult rv = aSource->Allocate();
      if (NS_FAILED(rv)) {
        NS_DispatchToMainThread(new ErrorCallbackRunnable(
