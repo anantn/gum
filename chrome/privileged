@@ -70,7 +70,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 -  return manager->GetUserMedia(win, aParams, onSuccess, onError);
 +  bool privileged = nsContentUtils::IsChromeDoc(win->GetExtantDoc());
 +
-+  MediaManager *manager = MediaManager::Get();
++  MediaManager* manager = MediaManager::Get();
 +  return manager->GetUserMedia(privileged, win, aParams, aOnSuccess, aOnError);
 +}
 +
@@ -92,7 +92,7 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +    return NS_ERROR_FAILURE;
 +  }
 +
-+  MediaManager *manager = MediaManager::Get();
++  MediaManager* manager = MediaManager::Get();
 +  return manager->GetUserMediaDevices(win, aOnSuccess, aOnError);
  }
  #endif
@@ -183,7 +183,41 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  #if defined(MOZ_WEBRTC)
  #include "MediaEngineWebRTC.h"
  #else
-@@ -82,16 +83,86 @@ public:
+@@ -35,16 +36,17 @@ public:
+     : mError(aError)
+     , mErrorMsg(aErrorMsg)
+     , mWindowID(aWindowID) {}
+ 
+   NS_IMETHOD
+   Run()
+   {
+     // Only run if the window is still active.
++    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+     WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
+     if (activeWindows->Get(mWindowID)) {
+       mError->OnError(mErrorMsg);
+     }
+     return NS_OK;
+   }
+ 
+ private:
+@@ -67,31 +69,104 @@ public:
+     : mSuccess(aSuccess)
+     , mFile(aFile)
+     , mWindowID(aWindowID) {}
+ 
+   NS_IMETHOD
+   Run()
+   {
+     // Only run if the window is still active.
++    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+     WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
+     if (activeWindows->Get(mWindowID)) {
+       // XPConnect is a magical unicorn.
+       mSuccess->OnSuccess(mFile);
+     }
+     return NS_OK;
+   }
  
  private:
    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
@@ -206,6 +240,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  NS_IMETHOD
 +  Run()
 +  {
++    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
 +    nsCOMPtr<nsIWritableVariant> devices =
 +      do_CreateInstance("@mozilla.org/variant;1");
 +
@@ -270,7 +306,26 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  class GetUserMediaStreamRunnable : public nsRunnable
  {
  public:
-@@ -153,90 +224,143 @@ private:
+@@ -104,16 +179,18 @@ public:
+     , mWindowID(aWindowID)
+     , mTrackID(aTrackID) {}
+ 
+   ~GetUserMediaStreamRunnable() {}
+ 
+   NS_IMETHOD
+   Run()
+   {
++    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
+     // Create a media stream.
+     nsCOMPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateInputStream();
+ 
+     nsPIDOMWindow *window = static_cast<nsPIDOMWindow*>
+       (nsGlobalWindow::GetInnerWindowWithId(mWindowID));
+ 
+     if (window && window->GetExtantDoc()) {
+       stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
+@@ -153,90 +230,145 @@ private:
   * are sent back to the DOM.
   *
   * Do not run this on the main thread. The success and error callbacks *MUST*
@@ -322,6 +377,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    NS_IMETHOD
    Run()
    {
++    NS_ASSERTION(!NS_IsMainThread(), "Don't call on main thread");
++
      mManager = MediaManager::Get();
  
 +    // Was a device provided?
@@ -430,7 +487,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        return;
      }
  
-@@ -256,191 +380,247 @@ public:
+@@ -256,191 +388,253 @@ public:
      nsresult rv = aSource->Allocate();
      if (NS_FAILED(rv)) {
        NS_DispatchToMainThread(new ErrorCallbackRunnable(
@@ -544,6 +601,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  NS_IMETHOD
 +  Run()
 +  {
++    NS_ASSERTION(!NS_IsMainThread(), "Don't call on main thread");
++
 +    uint32_t audioCount, videoCount, total, i;
 +    MediaManager* manager = MediaManager::Get();
 +
@@ -597,6 +656,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  nsIDOMGetUserMediaSuccessCallback* aOnSuccess,
 +  nsIDOMGetUserMediaErrorCallback* aOnError)
  {
++  NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
    NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
    NS_ENSURE_TRUE(aWindow, NS_ERROR_NULL_POINTER);
  
@@ -614,8 +675,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  rv = aParams->GetVideo(&video);
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
-+  nsIMediaDevice* device;
-+  rv = aParams->GetDevice(&device);
++  nsCOMPtr<nsIMediaDevice> device;
++  rv = aParams->GetDevice(getter_AddRefs(device));
 +  NS_ENSURE_SUCCESS(rv, rv);
 +
 +  // If a device was provided, make sure it support the type of stream requested.
@@ -741,6 +802,8 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  nsIGetUserMediaDevicesSuccessCallback* aOnSuccess,
 +  nsIDOMGetUserMediaErrorCallback* aOnError)
 +{
++  NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
 +  nsCOMPtr<nsIRunnable> gUMDRunnable = new GetUserMediaDevicesRunnable(
 +    aOnSuccess, aOnError
 +  );
