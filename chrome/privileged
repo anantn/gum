@@ -165,7 +165,7 @@ diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
 +++ b/dom/media/MediaManager.cpp
-@@ -25,26 +25,27 @@ namespace mozilla {
+@@ -25,95 +25,181 @@ namespace mozilla {
  
  /**
   * Send an error back to content. The error is the form a string.
@@ -186,15 +186,24 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    {
      // Only run if the window is still active.
 +    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
++    nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
      WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
      if (activeWindows->Get(mWindowID)) {
-       mError->OnError(mErrorMsg);
+-      mError->OnError(mErrorMsg);
++      error->OnError(mErrorMsg);
      }
      return NS_OK;
    }
  
  private:
-@@ -57,41 +58,116 @@ private:
+-  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
++  already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
+   const nsString mErrorMsg;
+   uint64_t mWindowID;
+ };
+ 
+ /**
   * Invoke the "onSuccess" callback in content. The callback will take a
   * DOMBlob in the case of {picture:true}, and a MediaStream in the case of
   * {audio:true} or {video:true}. There is a constructor available for each
@@ -216,16 +225,20 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    {
      // Only run if the window is still active.
 +    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
++
++    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
      WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
      if (activeWindows->Get(mWindowID)) {
        // XPConnect is a magical unicorn.
-       mSuccess->OnSuccess(mFile);
+-      mSuccess->OnSuccess(mFile);
++      success->OnSuccess(mFile);
      }
      return NS_OK;
    }
  
  private:
-   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+-  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
++  already_AddRefed<nsIDOMGetUserMediaSuccessCallback> mSuccess;
    nsCOMPtr<nsIDOMFile> mFile;
    uint64_t mWindowID;
  };
@@ -248,13 +261,15 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  {
 +    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
 +
++    nsCOMPtr<nsIGetUserMediaDevicesSuccessCallback> success(mSuccess);
++
 +    nsCOMPtr<nsIWritableVariant> devices =
 +      do_CreateInstance("@mozilla.org/variant;1");
 +
 +    int32_t len = mDevices.Length();
 +    if (len == 0) {
 +      devices->SetAsEmptyArray();
-+      mSuccess->OnSuccess(devices);
++      success->OnSuccess(devices);
 +      return NS_OK;
 +    }
 +
@@ -269,12 +284,13 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +                        const_cast<void*>(
 +                          static_cast<const void*>(tmp.Elements())
 +                        ));
-+    mSuccess->OnSuccess(devices);
++
++    success->OnSuccess(devices);
 +    return NS_OK;
 +  }
 +
 +private:
-+  nsCOMPtr<nsIGetUserMediaDevicesSuccessCallback> mSuccess;
++  already_AddRefed<nsIGetUserMediaDevicesSuccessCallback> mSuccess;
 +  nsTArray<nsCOMPtr<nsIMediaDevice> > mDevices;
 +};
 +
@@ -312,7 +328,14 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  class GetUserMediaStreamRunnable : public nsRunnable
  {
  public:
-@@ -104,16 +180,18 @@ public:
+-  GetUserMediaStreamRunnable(nsIDOMGetUserMediaSuccessCallback* aSuccess,
++  GetUserMediaStreamRunnable(
++    already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
+     MediaEngineSource* aSource, StreamListeners* aListeners,
+     uint64_t aWindowID, TrackID aTrackID)
+     : mSuccess(aSuccess)
+     , mSource(aSource)
+     , mListeners(aListeners)
      , mWindowID(aWindowID)
      , mTrackID(aTrackID) {}
  
@@ -331,7 +354,37 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
      if (window && window->GetExtantDoc()) {
        stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
-@@ -153,90 +231,145 @@ private:
+@@ -125,26 +211,27 @@ public:
+     GetUserMediaCallbackMediaStreamListener* listener =
+       new GetUserMediaCallbackMediaStreamListener(mSource, stream, mTrackID);
+     stream->GetStream()->AddListener(listener);
+ 
+     // No need for locking because we always do this in the main thread.
+     mListeners->AppendElement(listener);
+ 
+     // We're in the main thread, so no worries here either.
++    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
+     WindowTable* activeWindows = MediaManager::Get()->GetActiveWindows();
+     if (activeWindows->Get(mWindowID)) {
+-      mSuccess->OnSuccess(stream);
++      success->OnSuccess(stream);
+     }
+ 
+     return NS_OK;
+   }
+ 
+ private:
+-  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
++  already_AddRefed<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+   nsRefPtr<MediaEngineSource> mSource;
+   StreamListeners* mListeners;
+   uint64_t mWindowID;
+   TrackID mTrackID;
+ };
+ 
+ /**
+  * Runs on a seperate thread and is responsible for enumerating devices.
+@@ -153,90 +240,145 @@ private:
   * are sent back to the DOM.
   *
   * Do not run this on the main thread. The success and error callbacks *MUST*
@@ -495,7 +548,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        return;
      }
  
-@@ -256,191 +389,262 @@ public:
+@@ -256,191 +398,262 @@ public:
      nsresult rv = aSource->Allocate();
      if (NS_FAILED(rv)) {
        NS_DispatchToMainThread(new ErrorCallbackRunnable(
