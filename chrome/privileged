@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent e161d18990dc4abbe263076745686a7aee201f31
+# Parent 5543e5e5bcd3bf0eef53d6c97c1e023b9cb87b51
 
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 --- a/dom/base/Navigator.cpp
@@ -144,7 +144,7 @@ diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
 diff --git a/dom/base/nsDOMClassInfo.cpp b/dom/base/nsDOMClassInfo.cpp
 --- a/dom/base/nsDOMClassInfo.cpp
 +++ b/dom/base/nsDOMClassInfo.cpp
-@@ -2480,16 +2480,17 @@ nsDOMClassInfo::Init()
+@@ -2475,16 +2475,17 @@ nsDOMClassInfo::Init()
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorGeolocation)
      DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMNavigatorDesktopNotification,
                                          Navigator::HasDesktopNotificationSupport())
@@ -325,7 +325,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
  
      if (window && window->GetExtantDoc()) {
        stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
-@@ -153,90 +230,145 @@ private:
+@@ -153,90 +230,154 @@ private:
   * are sent back to the DOM.
   *
   * Do not run this on the main thread. The success and error callbacks *MUST*
@@ -366,7 +366,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    , mWindowID(aWindowID)
 +    , mInited(false) {}
  
-   ~GetUserMediaRunnable() {}
+-  ~GetUserMediaRunnable() {}
++  ~GetUserMediaRunnable() {
++    nsCOMPtr<nsIThread> mainThread;
++    NS_GetMainThread(getter_AddRefs(mainThread));
++    NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
++
++    if (mainThread) {
++      NS_ProxyRelease(mainThread, mSuccess);
++      NS_ProxyRelease(mainThread, mError);
++    }
++  }
  
    // We only support 1 audio and 1 video track for now.
    enum {
@@ -487,7 +497,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        return;
      }
  
-@@ -256,191 +388,253 @@ public:
+@@ -256,191 +397,262 @@ public:
      nsresult rv = aSource->Allocate();
      if (NS_FAILED(rv)) {
        NS_DispatchToMainThread(new ErrorCallbackRunnable(
@@ -596,7 +606,16 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    nsIDOMGetUserMediaErrorCallback* aError)
 +    : mSuccess(aSuccess)
 +    , mError(aError) {}
-+  ~GetUserMediaDevicesRunnable() {}
++  ~GetUserMediaDevicesRunnable() {
++    nsCOMPtr<nsIThread> mainThread;
++    NS_GetMainThread(getter_AddRefs(mainThread));
++    NS_WARN_IF_FALSE(mainThread, "Couldn't get the main thread!");
++
++    if (mainThread) {
++      NS_ProxyRelease(mainThread, mSuccess);
++      NS_ProxyRelease(mainThread, mError);
++    }
++  }
 +
 +  NS_IMETHOD
 +  Run()
@@ -774,7 +793,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  if (device) {
 +    gUMRunnable = new GetUserMediaRunnable(
 +      audio, video, picture, aOnSuccess, aOnError, listeners, windowID,
-+      (MediaDevice*) device
++      static_cast<MediaDevice*>(device.get())
 +    );
 +  } else {
 +    gUMRunnable = new GetUserMediaRunnable(
