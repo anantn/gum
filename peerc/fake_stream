@@ -1,0 +1,402 @@
+# HG changeset patch
+# Parent 709d312d6412c9ccb2f58b4bfb74b9b21b2bcaa9
+
+diff --git a/content/media/webrtc/MediaEngine.h b/content/media/webrtc/MediaEngine.h
+--- a/content/media/webrtc/MediaEngine.h
++++ b/content/media/webrtc/MediaEngine.h
+@@ -16,16 +16,23 @@ namespace mozilla {
+  * must implement a concrete class that will map these classes and methods
+  * to the appropriate backend. For example, on Desktop platforms, these will
+  * correspond to equivalent webrtc (GIPS) calls, and on B2G they will map to
+  * a Gonk interface.
+  */
+ class MediaEngineVideoSource;
+ class MediaEngineAudioSource;
+ 
++enum MediaEngineState {
++  kAllocated,
++  kStarted,
++  kStopped,
++  kReleased
++};
++
+ class MediaEngine
+ {
+ public:
+   virtual ~MediaEngine() {};
+ 
+   /* Populate an array of video sources in the nsTArray. Also include devices
+    * that are currently unavailable. */
+   virtual void EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >*) = 0;
+diff --git a/content/media/webrtc/MediaEngineDefault.h b/content/media/webrtc/MediaEngineDefault.h
+--- a/content/media/webrtc/MediaEngineDefault.h
++++ b/content/media/webrtc/MediaEngineDefault.h
+@@ -24,24 +24,16 @@ namespace mozilla {
+ namespace layers {
+ class ImageContainer;
+ class PlanarYCbCrImage;
+ }
+ 
+ /**
+  * The default implementation of the MediaEngine interface.
+  */
+-
+-enum DefaultEngineState {
+-  kAllocated,
+-  kStarted,
+-  kStopped,
+-  kReleased
+-};
+-
+ class MediaEngineDefaultVideoSource : public nsITimerCallback,
+                                       public MediaEngineVideoSource
+ {
+ public:
+   MediaEngineDefaultVideoSource();
+   ~MediaEngineDefaultVideoSource();
+ 
+   virtual void GetName(nsAString&);
+@@ -58,17 +50,17 @@ public:
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSITIMERCALLBACK
+ 
+ protected:
+   TrackID mTrackID;
+   nsCOMPtr<nsITimer> mTimer;
+   nsRefPtr<layers::ImageContainer> mImageContainer;
+ 
+-  DefaultEngineState mState;
++  MediaEngineState mState;
+   SourceMediaStream* mSource;
+   layers::PlanarYCbCrImage* mImage;
+ };
+ 
+ class MediaEngineDefaultAudioSource : public nsITimerCallback,
+                                       public MediaEngineAudioSource
+ {
+ public:
+@@ -87,17 +79,17 @@ public:
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSITIMERCALLBACK
+ 
+ protected:
+   TrackID mTrackID;
+   nsCOMPtr<nsITimer> mTimer;
+ 
+-  DefaultEngineState mState;
++  MediaEngineState mState;
+   SourceMediaStream* mSource;
+ };
+ 
+ class MediaEngineDefault : public MediaEngine
+ {
+ public:
+   MediaEngineDefault() {
+     mVSource = new MediaEngineDefaultVideoSource();
+diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/MediaEngineWebRTC.h
+--- a/content/media/webrtc/MediaEngineWebRTC.h
++++ b/content/media/webrtc/MediaEngineWebRTC.h
+@@ -43,24 +43,16 @@
+ #include "video_engine/include/vie_file.h"
+ 
+ 
+ namespace mozilla {
+ 
+ /**
+  * The WebRTC implementation of the MediaEngine interface.
+  */
+-
+-enum WebRTCEngineState {
+-  kAllocated,
+-  kStarted,
+-  kStopped,
+-  kReleased
+-};
+-
+ class MediaEngineWebRTCVideoSource : public MediaEngineVideoSource,
+                                      public webrtc::ExternalRenderer,
+                                      public nsRunnable
+ {
+ public:
+   // ViEExternalRenderer.
+   virtual int FrameSizeChange(unsigned int, unsigned int, unsigned int);
+   virtual int DeliverFrame(unsigned char*, int, uint32_t, int64_t);
+@@ -114,17 +106,17 @@ private:
+   webrtc::ViECapture* mViECapture;
+   webrtc::ViERender* mViERender;
+   webrtc::CaptureCapability mCaps; // Doesn't work on OS X.
+ 
+   int mCapIndex;
+   int mWidth, mHeight;
+   TrackID mTrackID;
+ 
+-  WebRTCEngineState mState;
++  MediaEngineState mState;
+   mozilla::ReentrantMonitor mMonitor; // Monitor for processing WebRTC frames.
+   SourceMediaStream* mSource;
+ 
+   int mFps; // Track rate (30 fps by default)
+   bool mInitDone;
+   bool mInSnapshotMode;
+   nsString* mSnapshotPath;
+ 
+@@ -184,17 +176,17 @@ private:
+   webrtc::VoEExternalMedia* mVoERender;
+ 
+   mozilla::ReentrantMonitor mMonitor;
+ 
+   int mCapIndex;
+   int mChannel;
+   TrackID mTrackID;
+   bool mInitDone;
+-  WebRTCEngineState mState;
++  MediaEngineState mState;
+ 
+   nsString mDeviceName;
+   nsString mDeviceUUID;
+ 
+   SourceMediaStream* mSource;
+ };
+ 
+ class MediaEngineWebRTC : public MediaEngine
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -10,20 +10,19 @@
+ #include "nsIScriptGlobalObject.h"
+ #include "nsIPopupWindowManager.h"
+ 
+ #include "nsJSUtils.h"
+ #include "nsDOMFile.h"
+ #include "nsGlobalWindow.h"
+ 
+ /* Using WebRTC backend on Desktops (Mac, Windows, Linux), otherwise default */
++#include "MediaEngineDefault.h"
+ #if defined(MOZ_WEBRTC)
+ #include "MediaEngineWebRTC.h"
+-#else
+-#include "MediaEngineDefault.h"
+ #endif
+ 
+ namespace mozilla {
+ 
+ // We only support 1 audio and 1 video track for now.
+ enum {
+   kVideoTrack = 1,
+   kAudioTrack = 2
+@@ -295,47 +294,76 @@ public:
+     : mAudio(aAudio)
+     , mVideo(aVideo)
+     , mPicture(aPicture)
+     , mSuccess(aSuccess)
+     , mError(aError)
+     , mListeners(aListeners)
+     , mWindowID(aWindowID)
+     , mDevice(aDevice)
+-    , mInited(true) {}
++    , mDeviceChosen(true)
++    , mBackendChosen(false) {}
+ 
+   GetUserMediaRunnable(bool aAudio, bool aVideo, bool aPicture,
+     already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
+     already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
+     StreamListeners* aListeners, uint64_t aWindowID)
+     : mAudio(aAudio)
+     , mVideo(aVideo)
+     , mPicture(aPicture)
+     , mSuccess(aSuccess)
+     , mError(aError)
+     , mListeners(aListeners)
+     , mWindowID(aWindowID)
+-    , mInited(false) {}
++    , mDeviceChosen(false)
++    , mBackendChosen(false) {}
+ 
+-  ~GetUserMediaRunnable() {}
++  /**
++   * The caller can also choose to provide their own backend instead of
++   * using the one provided by MediaManager::GetBackend.
++   */
++  GetUserMediaRunnable(bool aAudio, bool aVideo,
++    already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
++    already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
++    StreamListeners* aListeners, uint64_t aWindowID, MediaEngine* aBackend)
++    : mAudio(aAudio)
++    , mVideo(aVideo)
++    , mPicture(false)
++    , mSuccess(aSuccess)
++    , mError(aError)
++    , mListeners(aListeners)
++    , mWindowID(aWindowID)
++    , mDeviceChosen(false)
++    , mBackendChosen(true)
++    , mBackend(aBackend) {}
++
++  ~GetUserMediaRunnable() {
++    if (mBackendChosen) {
++      delete mBackend;
++    }
++  }
+ 
+   NS_IMETHOD
+   Run()
+   {
+     NS_ASSERTION(!NS_IsMainThread(), "Don't call on main thread");
+ 
+     mManager = MediaManager::Get();
+ 
++    // Was a backend provided?
++    if (!mBackendChosen) {
++      mBackend = mManager->GetBackend();
++    }
++
+     // Was a device provided?
+-    if (!mInited) {
++    if (!mDeviceChosen) {
+       nsresult rv = SelectDevice();
+       if (rv != NS_OK) {
+         return rv;
+       }
+-      mInited = true;
+     }
+ 
+     // It is an error if audio or video are requested along with picture.
+     if (mPicture && (mAudio || mVideo)) {
+       NS_DispatchToMainThread(new ErrorCallbackRunnable(
+         mSuccess, mError, NS_LITERAL_STRING("NOT_SUPPORTED_ERR"), mWindowID
+       ));
+       return NS_OK;
+@@ -368,29 +396,29 @@ public:
+   }
+ 
+   nsresult
+   SelectDevice()
+   {
+     uint32_t count;
+     if (mPicture || mVideo) {
+       nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+-      mManager->GetBackend()->EnumerateVideoDevices(&videoSources);
++      mBackend->EnumerateVideoDevices(&videoSources);
+ 
+       count = videoSources.Length();
+       if (count <= 0) {
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+           mSuccess, mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+         ));
+         return NS_ERROR_FAILURE;
+       }
+       mDevice = new MediaDevice(videoSources[0]);
+     } else {
+       nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
+-      mManager->GetBackend()->EnumerateAudioDevices(&audioSources);
++      mBackend->EnumerateAudioDevices(&audioSources);
+ 
+       count = audioSources.Length();
+       if (count <= 0) {
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+           mSuccess, mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+         ));
+         return NS_ERROR_FAILURE;
+       }
+@@ -455,17 +483,20 @@ private:
+   bool mPicture;
+ 
+   already_AddRefed<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+   already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
+   StreamListeners* mListeners;
+   uint64_t mWindowID;
+   nsRefPtr<MediaDevice> mDevice;
+ 
+-  bool mInited;
++  bool mDeviceChosen;
++  bool mBackendChosen;
++
++  MediaEngine* mBackend;
+   MediaManager* mManager;
+ };
+ 
+ /**
+  * Similar to GetUserMediaRunnable, but used for the chrome-only
+  * GetUserMediaDevices function. Enumerates a list of audio & video devices,
+  * wraps them up in nsIMediaDevice objects and returns it to the success
+  * callback.
+@@ -539,17 +570,20 @@ MediaManager::GetUserMedia(bool aPrivile
+   NS_ENSURE_TRUE(aParams, NS_ERROR_NULL_POINTER);
+   NS_ENSURE_TRUE(aWindow, NS_ERROR_NULL_POINTER);
+ 
+   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> onSuccess(aOnSuccess);
+   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> onError(aOnError);
+ 
+   /* Get options */
+   nsresult rv;
+-  bool audio, video, picture;
++  bool fake, audio, video, picture;
++
++  rv = aParams->GetPicture(&fake);
++  NS_ENSURE_SUCCESS(rv, rv);
+ 
+   rv = aParams->GetPicture(&picture);
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+   rv = aParams->GetAudio(&audio);
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+   rv = aParams->GetVideo(&video);
+@@ -625,24 +659,34 @@ MediaManager::GetUserMedia(bool aPrivile
+   }
+ 
+   /**
+    * Pass runnables along to GetUserMediaRunnable so it can add the
+    * MediaStreamListener to the runnable list. The last argument can
+    * optionally be a MediaDevice object, which should provided if one was
+    * selected by the user via the UI, or was provided by privileged code
+    * via the device: attribute via nsIMediaStreamOptions.
++   *
++   * If a fake stream was requested, we force the use of the default backend.
+    */
+   nsCOMPtr<nsIRunnable> gUMRunnable;
+-  if (device) {
++  if (fake) {
++    // Fake stream from default backend.
++    gUMRunnable = new GetUserMediaRunnable(
++      audio, video, onSuccess.forget(), onError.forget(), listeners,
++      windowID, new MediaEngineDefault()
++    );
++  } else if (device) {
++    // Stream from provided device.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID, static_cast<MediaDevice*>(device.get())
+     );
+   } else {
++    // Stream from default device from WebRTC backend.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID
+     );
+   }
+ 
+   if (picture) {
+     // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
+diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorUserMedia.idl
+--- a/dom/media/nsIDOMNavigatorUserMedia.idl
++++ b/dom/media/nsIDOMNavigatorUserMedia.idl
+@@ -33,16 +33,17 @@ interface nsIDOMGetUserMediaSuccessCallb
+ interface nsIDOMGetUserMediaErrorCallback : nsISupports
+ {
+   void onError(in DOMString error);
+ };
+ 
+ [scriptable, uuid(92a19f9e-9fed-40d1-aeeb-b07fa7f191e8)]
+ interface nsIMediaStreamOptions : nsISupports
+ {
++  readonly attribute boolean fake;
+   readonly attribute boolean audio;
+   readonly attribute boolean video;
+   readonly attribute boolean picture;
+   readonly attribute DOMString camera;
+   readonly attribute nsIMediaDevice device;
+ };
+ 
+ [scriptable, uuid(381e0071-0be5-4f6b-ae21-8e3407a37faa)]
