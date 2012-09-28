@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 709d312d6412c9ccb2f58b4bfb74b9b21b2bcaa9
+# Parent 3134bbdeb8a88c2e19813e4e40679397c3ee0383
 
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 --- a/dom/media/Makefile.in
@@ -28,25 +28,7 @@ diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 --- a/dom/media/PeerConnection.js
 +++ b/dom/media/PeerConnection.js
-@@ -1,12 +1,17 @@
- /* This Source Code Form is subject to the terms of the Mozilla Public
-  * License, v. 2.0. If a copy of the MPL was not distributed with this
-  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
- 
-+
-+// FIXME: Have a global list of PCs with window references, so that
-+// they can be cleared when a page is torn down (listen for observer event)
-+// Broadcast event from Navigator::OnNavigation
-+
- "use strict";
- 
- const IDService = {};
- const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
- 
- Cu.import("resource://gre/modules/Services.jsm");
- Cu.import("resource://gre/modules/XPCOMUtils.jsm");
- Cu.import("resource://gre/modules/identity/WebRTC.jsm", IDService);
-@@ -14,18 +19,18 @@ Cu.import("resource://gre/modules/identi
+@@ -14,18 +14,53 @@ Cu.import("resource://gre/modules/identi
  const PC_CONTRACT = "@mozilla.org/dom/peerconnection;1";
  const PC_ICE_CONTRACT = "@mozilla.org/dom/rtcicecandidate;1";
  const PC_SESSION_CONTRACT = "@mozilla.org/dom/rtcsessiondescription;1";
@@ -57,6 +39,41 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
  
 -function IceCandidate() {
 -  this.candidate = null;
++// Global list of PeerConnection objects, so they can be cleaned up when
++// a page is torn down. (Maps outer window ID to an array of PC objects).
++function GlobalPCList() {
++  this._list = {};
++  Services.obs.addObserver(this, "outer-window-destroyed", true);
++}
++GlobalPCList.prototype = {
++  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
++                                         Ci.nsISupportsWeakReference]),
++
++  addPC: function(pc) {
++    let winID = pc._winID;
++    if (this._list[winID]) {
++      this._list[winID].push(pc);
++    } else {
++      this._list[winID] = [pc];
++    }
++  },
++
++  observe: function(subject, topic, data) {
++    if (topic != "outer-window-destroyed") {
++      return;
++    }
++    let winID = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
++    if (this._list[winID]) {
++      this._list[winID].forEach(function(pc) {
++        pc._pc.close();
++        delete pc._observer;
++      });
++      delete this._list[winID];
++    }
++  }
++};
++let _globalPCList = new GlobalPCList();
++
 +function IceCandidate(candidate) {
 +  this.candidate = candidate;
    this.sdpMid = null;
@@ -67,7 +84,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
  
    classInfo: XPCOMUtils.generateCI({classID: PC_ICE_CID,
                                      contractID: PC_ICE_CONTRACT,
-@@ -43,19 +48,19 @@ IceCandidate.prototype = {
+@@ -43,19 +78,19 @@ IceCandidate.prototype = {
    constructor: function(win, cand, mid, mline) {
      this._win = win;
      this.candidate = cand;
@@ -90,7 +107,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
                                      contractID: PC_SESSION_CONTRACT,
                                      classDescription: "SessionDescription",
                                      interfaces: [
-@@ -83,33 +88,38 @@ SessionDescription.prototype = {
+@@ -83,33 +118,38 @@ SessionDescription.prototype = {
  
  function PeerConnection() {
    this._queue = [];
@@ -140,7 +157,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
                                      contractID: PC_CONTRACT,
                                      classDescription: "PeerConnection",
                                      interfaces: [
-@@ -117,202 +127,93 @@ PeerConnection.prototype = {
+@@ -117,202 +157,96 @@ PeerConnection.prototype = {
                                        Ci.nsIDOMGlobalObjectConstructor
                                      ],
                                      flags: Ci.nsIClassInfo.DOM_OBJECT}),
@@ -171,8 +188,10 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
      this._win = win;
      this._winID = this._win.QueryInterface(Ci.nsIInterfaceRequestor)
                             .getInterface(Ci.nsIDOMWindowUtils).outerWindowID;
--
+ 
 -    dump("!!! mozPeerConnection constructor called " + this._win + "\n");
++    // Add a reference to the PeerConnection to global list.
++    _globalPCList.addPC(this);
    },
  
 -  // FIXME: Right now we do not enforce proper invocation (eg: calling
@@ -364,7 +383,7 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
          onError.onCallback("Invalid type " + offer.type + " passed");
        }
        return;
-@@ -328,365 +229,282 @@ PeerConnection.prototype = {
+@@ -328,365 +262,282 @@ PeerConnection.prototype = {
      if (!constraints) {
        constraints = "";
      }
@@ -855,7 +874,22 @@ diff --git a/dom/media/PeerConnection.js b/dom/media/PeerConnection.js
 diff --git a/dom/media/bridge/IPeerConnection.idl b/dom/media/bridge/IPeerConnection.idl
 --- a/dom/media/bridge/IPeerConnection.idl
 +++ b/dom/media/bridge/IPeerConnection.idl
-@@ -34,21 +34,16 @@ interface IPeerConnectionObserver : nsIS
+@@ -1,14 +1,12 @@
+ #include "nsIThread.idl"
+ #include "nsIDOMWindow.idl"
+ 
+-interface nsIDOMDataChannel;
+ interface nsIDOMMediaStream;
+-interface nsIDOMWindow;
+ 
+ /* Do not confuse with nsIDOMRTCPeerConnection. This interface is purely for
+  * communication between the PeerConnection JS DOM binding and the C++
+  * implementation in SIPCC.
+  *
+  * See media/webrtc/signaling/include/PeerConnectionImpl.h
+  */
+ [scriptable, uuid(84efc76f-41d9-496a-9444-2965d179d419)]
+@@ -34,21 +32,16 @@ interface IPeerConnectionObserver : nsIS
    void onStateChange(in unsigned long state);
  
    /* Changes to MediaStreams */
@@ -877,7 +911,7 @@ diff --git a/dom/media/bridge/IPeerConnection.idl b/dom/media/bridge/IPeerConnec
    void foundIceCandidate(in string candidate);
  };
  
-@@ -64,23 +59,18 @@ interface IPeerConnection : nsISupports
+@@ -64,23 +57,18 @@ interface IPeerConnection : nsISupports
    const long kActionPRAnswer = 2;
  
    const long kIceGathering = 0;
@@ -902,7 +936,7 @@ diff --git a/dom/media/bridge/IPeerConnection.idl b/dom/media/bridge/IPeerConnec
    void setLocalDescription(in long action, in string sdp);
    void setRemoteDescription(in long action, in string sdp);
  
-@@ -94,35 +84,16 @@ interface IPeerConnection : nsISupports
+@@ -94,35 +82,16 @@ interface IPeerConnection : nsISupports
     * call PeerConnectionImpl does not parse ICE candidates, just sticks them
     * into the SDP.
     */
@@ -988,7 +1022,8 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
      [optional] in RTCPeerConnectionCallback failureCallback,
      [optional] in jsval constraints);
  
-@@ -94,36 +80,13 @@ interface nsIDOMRTCPeerConnection : nsIS
+@@ -93,37 +79,9 @@ interface nsIDOMRTCPeerConnection : nsIS
+ 
    /* Event handlers. TODO: Use real EventTarget */
    attribute RTCPeerConnectionCallback onaddstream;
    attribute RTCPeerConnectionCallback onremovestream;
@@ -996,7 +1031,7 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
    attribute RTCPeerConnectionCallback onstatechange;
    attribute RTCPeerConnectionCallback ongatheringchange;
    attribute RTCPeerConnectionCallback onicechange;
- 
+-
 -  /* Identity */
 -  void selectIdentity(in RTCPeerConnectionCallback successCallback,
 -    [optional] in RTCPeerConnectionCallback failureCallback);
@@ -1012,10 +1047,10 @@ diff --git a/dom/media/nsIDOMRTCPeerConnection.idl b/dom/media/nsIDOMRTCPeerConn
 -  attribute RTCPeerConnectionCallbackVoid onClosedConnection;
 -  attribute RTCPeerConnectionCallback onDataChannel;
 -
-   /* For purposes only! Remove in production */
-   nsIDOMMediaStream createFakeMediaStream(in string type,
-                                           [optional] in boolean mute
-                                           );
+-  /* For purposes only! Remove in production */
+-  nsIDOMMediaStream createFakeMediaStream(in string type,
+-                                          [optional] in boolean mute
+-                                          );
 -
 -  /* Bring up SCTP/DTLS/UDP connection */
 -  /* XXX remove */
@@ -2293,10 +2328,10 @@ diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/
          mObserver->OnStateChange(IPeerConnectionObserver::kIceState);
      }
 @@ -493,17 +493,17 @@ PeerConnectionImpl::Initialize(IPeerConn
-   CSFLogDebugS(logTag, __FUNCTION__ << ": Sleeping until kStarted");
    while(PeerConnectionCtx::GetInstance()->sipcc_state() != kStarted) {
      PR_Sleep(100);
    }
+ #endif
  
    return NS_OK;
  }

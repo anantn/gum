@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 709d312d6412c9ccb2f58b4bfb74b9b21b2bcaa9
+# Parent 46e1ab723d88a7205004a9a8102fdff57e4e37c7
 
 diff --git a/content/media/webrtc/MediaEngine.h b/content/media/webrtc/MediaEngine.h
 --- a/content/media/webrtc/MediaEngine.h
@@ -333,7 +333,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 -  bool audio, video, picture;
 +  bool fake, audio, video, picture;
 +
-+  rv = aParams->GetPicture(&fake);
++  rv = aParams->GetFake(&fake);
 +  NS_ENSURE_SUCCESS(rv, rv);
  
    rv = aParams->GetPicture(&picture);
@@ -382,13 +382,17 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 diff --git a/dom/media/nsIDOMNavigatorUserMedia.idl b/dom/media/nsIDOMNavigatorUserMedia.idl
 --- a/dom/media/nsIDOMNavigatorUserMedia.idl
 +++ b/dom/media/nsIDOMNavigatorUserMedia.idl
-@@ -33,16 +33,17 @@ interface nsIDOMGetUserMediaSuccessCallb
+@@ -30,19 +30,20 @@ interface nsIDOMGetUserMediaSuccessCallb
+ };
+ 
+ [scriptable, function, uuid(2614bbcf-85cc-43e5-8740-964f52bdc7ca)]
  interface nsIDOMGetUserMediaErrorCallback : nsISupports
  {
    void onError(in DOMString error);
  };
  
- [scriptable, uuid(92a19f9e-9fed-40d1-aeeb-b07fa7f191e8)]
+-[scriptable, uuid(92a19f9e-9fed-40d1-aeeb-b07fa7f191e8)]
++[scriptable, uuid(36d9c3b7-7594-4035-8a7e-92c2cecdb2c5)]
  interface nsIMediaStreamOptions : nsISupports
  {
 +  readonly attribute boolean fake;
