@@ -1,0 +1,304 @@
+# HG changeset patch
+# Parent 4626e836a5deaf8774e90a75fda643bcc78cb793
+# User Anant Narayanan <anant@kix.in>
+Hookup getUserMedia UI with DOM backend
+
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -2,16 +2,17 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "MediaManager.h"
+ 
+ #include "MediaStreamGraph.h"
+ #include "nsIDOMFile.h"
+ #include "nsIEventTarget.h"
++#include "nsIUUIDGenerator.h"
+ #include "nsIScriptGlobalObject.h"
+ #include "nsIPopupWindowManager.h"
+ 
+ #include "nsJSUtils.h"
+ #include "nsDOMFile.h"
+ #include "nsGlobalWindow.h"
+ 
+ /* Using WebRTC backend on Desktops (Mac, Windows, Linux), otherwise default */
+@@ -381,16 +382,39 @@ public:
+       ProcessGetUserMedia(mDevice->GetSource(), kAudioTrack);
+       return NS_OK;
+     }
+ 
+     return NS_OK;
+   }
+ 
+   nsresult
++  Denied()
++  {
++    if (NS_IsMainThread()) {
++      nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
++      error->OnError(NS_LITERAL_STRING("PERMISSION_DENIED")); 
++    } else {
++      NS_DispatchToMainThread(new ErrorCallbackRunnable(
++        mSuccess, mError, NS_LITERAL_STRING("PERMISSION_DENIED"), mWindowID
++      ));
++    }
++
++    return NS_OK;
++  }
++
++  nsresult
++  SetDevice(MediaDevice* aDevice)
++  {
++    mDevice = aDevice;
++    mDeviceChosen = true;
++    return NS_OK;
++  }
++
++  nsresult
+   SelectDevice()
+   {
+     uint32_t count;
+     if (mPicture || mVideo) {
+       nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+       mBackend->EnumerateVideoDevices(&videoSources);
+ 
+       count = videoSources.Length();
+@@ -622,26 +646,16 @@ MediaManager::GetUserMedia(bool aPrivile
+           domDoc, aWindow, nullptr, EmptyString(), EmptyString()
+         );
+         return NS_OK;
+       }
+     }
+   }
+ #endif
+ 
+-  /**
+-   * UI integration point. Check for permission with the user!
+-   * No UI for picture:true here, since user permission is implied by the
+-   * preview dialog that will be shown by GetUserMediaRunnable in SendPicture.
+-   */
+-  if (!aPrivileged && !picture) {
+-    // To be filled in by code from bug 729522. If permission is denied, call
+-    // onError, and do not continue.
+-  }
+-
+   // Store the WindowID in a hash table and mark as active. The entry is removed
+   // when this window is closed or navigated away from.
+   uint64_t windowID = aWindow->WindowID();
+   StreamListeners* listeners = mActiveWindows.Get(windowID);
+   if (!listeners) {
+     listeners = new StreamListeners;
+     mActiveWindows.Put(windowID, listeners);
+   }
+@@ -650,17 +664,17 @@ MediaManager::GetUserMedia(bool aPrivile
+    * Pass runnables along to GetUserMediaRunnable so it can add the
+    * MediaStreamListener to the runnable list. The last argument can
+    * optionally be a MediaDevice object, which should provided if one was
+    * selected by the user via the UI, or was provided by privileged code
+    * via the device: attribute via nsIMediaStreamOptions.
+    *
+    * If a fake stream was requested, we force the use of the default backend.
+    */
+-  nsCOMPtr<nsIRunnable> gUMRunnable;
++  nsRefPtr<GetUserMediaRunnable> gUMRunnable;
+   if (fake) {
+     // Fake stream from default backend.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, onSuccess.forget(), onError.forget(), listeners,
+       windowID, new MediaEngineDefault()
+     );
+   } else if (device) {
+     // Stream from provided device.
+@@ -674,25 +688,45 @@ MediaManager::GetUserMedia(bool aPrivile
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID
+     );
+   }
+ 
+   if (picture) {
+     // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
+     NS_DispatchToMainThread(gUMRunnable);
+-  } else {
+-    // Reuse the same thread to save memory.
++  } else if (aPrivileged) {
+     if (!mMediaThread) {
+-      rv = NS_NewThread(getter_AddRefs(mMediaThread));
++      nsresult rv = NS_NewThread(getter_AddRefs(mMediaThread));
+       NS_ENSURE_SUCCESS(rv, rv);
+     }
++    mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
++  } else {
++    // Ask for user permission, and dispatch runnable (or not) when a response
++    // is received via an observer notification. Each call is paired with its
++    // runnable by a GUID.
++    nsresult rv;
++    nsCOMPtr<nsIUUIDGenerator> uuidgen =
++      do_GetService("@mozilla.org/uuid-generator;1", &rv);
++    NS_ENSURE_SUCCESS(rv, rv);
+ 
+-    mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
++    nsID id;
++    rv = uuidgen->GenerateUUIDInPlace(&id);
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    char buffer[NSID_LENGTH];
++    id.ToProvidedString(buffer);
++
++    NS_ConvertUTF8toUTF16 callID(buffer);
++    mActiveCallbacks.Put(callID, gUMRunnable);
++
++    nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
++    obs->NotifyObservers(aParams, "getUserMedia:request", callID.get());
+   }
++
+   return NS_OK;
+ }
+ 
+ nsresult
+ MediaManager::GetUserMediaDevices(nsPIDOMWindow* aWindow,
+   nsIGetUserMediaDevicesSuccessCallback* aOnSuccess,
+   nsIDOMGetUserMediaErrorCallback* aOnError)
+ {
+@@ -757,23 +791,69 @@ MediaManager::OnNavigation(uint64_t aWin
+ 
+   mActiveWindows.Remove(aWindowID);
+ }
+ 
+ nsresult
+ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
+   const PRUnichar* aData)
+ {
+-  if (strcmp(aTopic, "xpcom-shutdown")) {
++  NS_ASSERTION(NS_IsMainThread(), "Observer invoked off the main thread");
++  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
++  
++  if (!strcmp(aTopic, "xpcom-shutdown")) {
++    obs->RemoveObserver(this, "xpcom-shutdown");
++    obs->RemoveObserver(this, "getUserMedia:response:allow");
++    obs->RemoveObserver(this, "getUserMedia:response:deny");
++
++    // Close off any remaining active windows.
++    mActiveWindows.Clear();
++    mActiveCallbacks.Clear();
++    sSingleton = nullptr;
++    
+     return NS_OK;
+   }
+ 
+-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+-  obs->RemoveObserver(this, "xpcom-shutdown");
++  if (!strcmp(aTopic, "getUserMedia:response:allow")) {
++    nsString key(aData);
++    nsRefPtr<nsRunnable> runnable;
++    if (!mActiveCallbacks.Get(key, getter_AddRefs(runnable))) {
++      return NS_OK;
++    }
++    
++    // Reuse the same thread to save memory.
++    if (!mMediaThread) {
++      nsresult rv = NS_NewThread(getter_AddRefs(mMediaThread));
++      NS_ENSURE_SUCCESS(rv, rv);
++    }
+ 
+-  // Close off any remaining active windows.
+-  mActiveWindows.Clear();
+-  sSingleton = nullptr;
++    if (aSubject) {
++      // A particular device was chosen by the user.
++      nsCOMPtr<nsIMediaDevice> device = do_QueryInterface(aSubject);
++      if (device) {
++        GetUserMediaRunnable* gUMRunnable =
++          static_cast<GetUserMediaRunnable*>(runnable.get());
++        gUMRunnable->SetDevice(static_cast<MediaDevice*>(device.get()));
++      }
++    }
++     
++    mMediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
++    mActiveCallbacks.Remove(key);
++    return NS_OK;
++  }
++
++  if (!strcmp(aTopic, "getUserMedia:response:deny")) {
++    nsString key(aData);
++    nsRefPtr<nsRunnable> runnable;
++    if (mActiveCallbacks.Get(key, getter_AddRefs(runnable))) {
++      GetUserMediaRunnable* gUMRunnable =
++          static_cast<GetUserMediaRunnable*>(runnable.get());
++      gUMRunnable->Denied();
++      mActiveCallbacks.Remove(key);
++    }
++
++    return NS_OK;
++  }
+ 
+   return NS_OK;
+ }
+ 
+ } // namespace mozilla
+diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
+--- a/dom/media/MediaManager.h
++++ b/dom/media/MediaManager.h
+@@ -3,16 +3,17 @@
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "MediaEngine.h"
+ #include "mozilla/Services.h"
+ 
+ #include "nsHashKeys.h"
+ #include "nsGlobalWindow.h"
+ #include "nsClassHashtable.h"
++#include "nsRefPtrHashtable.h"
+ #include "nsObserverService.h"
+ 
+ #include "nsPIDOMWindow.h"
+ #include "nsIDOMNavigatorUserMedia.h"
+ #include "mozilla/Attributes.h"
+ 
+ namespace mozilla {
+ 
+@@ -146,16 +147,18 @@ class MediaManager MOZ_FINAL : public ns
+ {
+ public:
+   static MediaManager* Get() {
+     if (!sSingleton) {
+       sSingleton = new MediaManager();
+ 
+       nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+       obs->AddObserver(sSingleton, "xpcom-shutdown", false);
++      obs->AddObserver(sSingleton, "getUserMedia:response:allow", false);
++      obs->AddObserver(sSingleton, "getUserMedia:response:deny", false);
+     }
+     return sSingleton;
+   }
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSIOBSERVER
+ 
+   MediaEngine* GetBackend();
+@@ -171,23 +174,25 @@ public:
+   void OnNavigation(uint64_t aWindowID);
+ 
+ private:
+   // Make private because we want only one instance of this class
+   MediaManager()
+   : mBackend(nullptr)
+   , mMediaThread(nullptr) {
+     mActiveWindows.Init();
++    mActiveCallbacks.Init();
+   };
+   MediaManager(MediaManager const&) {};
+ 
+   ~MediaManager() {
+     delete mBackend;
+   };
+ 
+   MediaEngine* mBackend;
+   nsCOMPtr<nsIThread> mMediaThread;
+   WindowTable mActiveWindows;
++  nsRefPtrHashtable<nsStringHashKey, nsRunnable> mActiveCallbacks;
+ 
+   static nsRefPtr<MediaManager> sSingleton;
+ };
+ 
+ } // namespace mozilla

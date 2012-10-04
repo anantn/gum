@@ -78,19 +78,16 @@
 
   function startVideo() {
     video_status = true;
-    content.appendChild(video);
     startMedia({video:true});
   }
 
   function startAudio() {
     audio_status = true;
-    content.appendChild(audio);
     startMedia({audio:true});
   }
 
   function startPicture() {
     picture_status = true;
-    content.appendChild(picture);
     startMedia({picture:true});
   }
 
@@ -123,14 +120,17 @@
       window.navigator.mozGetUserMedia(param, function(stream) {
         message.innerHTML = "<p>Success!</p>";
         if (video_status) {
-          video.src = stream;
+          content.appendChild(video);
+          video.mozSrcObject = stream;
           video.play();
         }
         if (audio_status) {
-          audio.src = stream;
+          content.appendChild(audio);
+          audio.mozSrcObject = stream;
           audio.play();
         }
         if (picture_status) {
+          content.appendChild(picture);
           picture.src = window.URL.createObjectURL(stream);
           picture.onload = function(e) {
             window.URL.revokeObjectURL(this.src);

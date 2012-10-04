@@ -1,0 +1,936 @@
+# vim: se ft=diff :
+# HG changeset patch
+# Parent cb64683950d9102ad18042092c8becce1dde7376
+# User Dão Gottwald <dao@mozilla.com>
+# Date 2012-10-02 05:58
+Bug 729522 - "Implement WebRTC navigator.getUserMedia() user interface" []
+* * *
+Integrate getUserMedia UI with DOM backend
+
+diff --git a/browser/base/content/browser-getUserMedia.js b/browser/base/content/browser-getUserMedia.js
+new file mode 100644
+--- /dev/null
++++ b/browser/base/content/browser-getUserMedia.js
+@@ -0,0 +1,125 @@
++# -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++let getUserMedia = {
++
++  init: function() {
++    Services.obs.addObserver(this, "getUserMedia:request", false);
++  },
++
++  uninit: function() {
++    Services.obs.removeObserver(this, "getUserMedia:request");
++  },
++
++  observe: function(aSubject, aTopic, aData) {
++    if (aTopic != "getUserMedia:request") {
++      return;
++    }
++    try {
++      let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
++      this.handleRequest(aData, params);
++    } catch(e) {
++      Cu.reportError(e);
++    }
++  },
++
++  handleRequest: function(aRequestID, aParams) {
++    navigator.mozGetUserMediaDevices(
++      function (devices) {
++        this.prompt(aRequestID, aParams.audio, aParams.video, devices);
++      }.bind(this),
++      function (error) {
++        Cu.reportError(error);
++      }
++    );
++  },
++
++  prompt: function(aRequestID, aAudio, aVideo, aDevices) {
++    let audioDevices = [];
++    let videoDevices = [];
++    for (let device of aDevices) {
++      device = device.QueryInterface(Ci.nsIMediaDevice);
++      switch (device.type) {
++        case "audio":
++          if (aAudio) {
++            audioDevices.push(device);
++          }
++          break;
++        case "video":
++          if (aVideo) {
++            videoDevices.push(device);
++          }
++          break;
++      }
++    }
++
++    let requestType;
++    if (audioDevices.length && videoDevices.length) {
++      requestType = "shareCameraAndMicrophone";
++    } else if (audioDevices.length) {
++      requestType = "shareMicrophone";
++    } else if (videoDevices.length) {
++      requestType = "shareCamera";
++    } else {
++      return;
++    }
++
++    let browser = gBrowser.selectedBrowser;
++    let host = browser.contentDocument.documentURIObject.asciiHost;
++    let message = gNavigatorBundle.getFormattedString("getUserMedia." + requestType + ".message",
++                                                      [ host ]);
++
++    let responseSent = false;
++
++    let mainAction = {
++      label: gNavigatorBundle.getString("getUserMedia." + requestType + ".label"),
++      accessKey: gNavigatorBundle.getString("getUserMedia." + requestType + ".accesskey"),
++      callback: function() {
++        Services.obs.notifyObservers(
++          null, "getUserMedia:response:allow", aRequestID
++        );
++        responseSent = true;
++      }
++    };
++
++    let secondaryActions = [];
++    let selectableDevices = videoDevices.length ? videoDevices : audioDevices;
++    if (selectableDevices.length > 1) {
++      let selectableDeviceNumber = 0;
++      for (let device of selectableDevices) {
++        secondaryActions.push({
++          label: gNavigatorBundle.getFormattedString(
++                   device.type == "audio" ?
++                     "getUserMedia.shareSpecificMicrophone.label" :
++                     "getUserMedia.shareSpecificCamera.label",
++                   [ device.name ]),
++          accessKey: ++selectableDeviceNumber,
++          callback: function() {
++            Services.obs.notifyObservers(
++              device, "getUserMedia:response:allow", aRequestID
++            );
++            responseSent = true;
++          }
++        });
++      }
++    }
++
++    let options = {
++      removeOnDismissal: true,
++      eventCallback: function(aType) {
++        if (!responseSent && aType == "removed") {
++          Services.obs.notifyObservers(
++            null, "getUserMedia:response:deny", aRequestID
++          );
++        }
++      }
++    };
++
++    let notification =
++      PopupNotifications.show(browser, "getUserMedia-shareDevices", message,
++                              "getUserMedia-notification-icon", mainAction,
++                              secondaryActions, options);
++  }
++};
+diff --git a/browser/base/content/browser.js b/browser/base/content/browser.js
+--- a/browser/base/content/browser.js
++++ b/browser/base/content/browser.js
+@@ -164,16 +164,17 @@ let gInitialPages = [
+   "about:privatebrowsing",
+   "about:sessionrestore"
+ ];
+ 
+ #include browser-addons.js
+ #include browser-feeds.js
+ #include browser-fullScreen.js
+ #include browser-fullZoom.js
++#include browser-getUserMedia.js
+ #include browser-places.js
+ #include browser-plugins.js
+ #include browser-safebrowsing.js
+ #include browser-social.js
+ #include browser-tabPreviews.js
+ #include browser-tabview.js
+ #include browser-thumbnails.js
+ 
+@@ -1263,16 +1264,17 @@ var gBrowserInit = {
+     Services.obs.addObserver(gXPInstallObserver, "addon-install-complete", false);
+     Services.obs.addObserver(gFormSubmitObserver, "invalidformsubmit", false);
+ 
+     BrowserOffline.init();
+     OfflineApps.init();
+     IndexedDBPromptHelper.init();
+     gFormSubmitObserver.init();
+     SocialUI.init();
++    getUserMedia.init();
+     AddonManager.addAddonListener(AddonsMgrListener);
+ 
+     gBrowser.addEventListener("pageshow", function(event) {
+       // Filter out events that are not about the document load we are interested in
+       if (event.target == content.document)
+         setTimeout(pageShowEventHandlers, 0, event);
+     }, true);
+ 
+@@ -1604,16 +1606,17 @@ var gBrowserInit = {
+         Cu.reportError(ex);
+       }
+ 
+       BrowserOffline.uninit();
+       OfflineApps.uninit();
+       IndexedDBPromptHelper.uninit();
+       AddonManager.removeAddonListener(AddonsMgrListener);
+       SocialUI.uninit();
++      getUserMedia.uninit();
+     }
+ 
+     // Final window teardown, do this last.
+     window.XULBrowserWindow.destroy();
+     window.XULBrowserWindow = null;
+     window.QueryInterface(Ci.nsIInterfaceRequestor)
+           .getInterface(Ci.nsIWebNavigation)
+           .QueryInterface(Ci.nsIDocShellTreeItem).treeOwner
+diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/locales/en-US/chrome/browser/browser.properties
+--- a/browser/locales/en-US/chrome/browser/browser.properties
++++ b/browser/locales/en-US/chrome/browser/browser.properties
+@@ -418,8 +418,21 @@ identity.newIdentity.email.placeholder =
+ identity.newIdentity.description = Enter your email address to sign in to %S
+ identity.next.label = Next
+ identity.next.accessKey = n
+ # LOCALIZATION NOTE: shown in the popup notification when a user successfully logs into a website
+ # LOCALIZATION NOTE (identity.loggedIn.description): %S is the user's identity (e.g. user@example.com)
+ identity.loggedIn.description = Signed in as: %S
+ identity.loggedIn.signOut.label = Sign Out
+ identity.loggedIn.signOut.accessKey = O
++
++# LOCALIZATION NOTE (getUserMedia.prompt.message): %S is the website origin (e.g. www.mozilla.org)
++getUserMedia.shareCamera.message = Would you like to share your camera with %S?
++getUserMedia.shareCamera.label = Share Camera
++getUserMedia.shareCamera.accesskey = S
++getUserMedia.shareSpecificCamera.label = Share Camera: %S
++getUserMedia.shareMicrophone.message = Would you like to share your microphone with %S?
++getUserMedia.shareMicrophone.label = Share Microphone
++getUserMedia.shareMicrophone.accesskey = S
++getUserMedia.shareSpecificMicrophone.label = Share Microphone: %S
++getUserMedia.shareCameraAndMicrophone.message = Would you like to share your camera and microphone with %S?
++getUserMedia.shareCameraAndMicrophone.label = Share Camera and Microphone
++getUserMedia.shareCameraAndMicrophone.accesskey = S
+diff --git a/browser/themes/gnomestripe/browser.css b/browser/themes/gnomestripe/browser.css
+--- a/browser/themes/gnomestripe/browser.css
++++ b/browser/themes/gnomestripe/browser.css
+@@ -1194,16 +1194,20 @@ toolbar[iconsize="small"] #feed-button {
+ .popup-notification-icon[popupid="password-change"] {
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ 
+ .popup-notification-icon[popupid="webapps-install"] {
+   list-style-image: url(chrome://browser/skin/webapps-64.png);
+ }
+ 
++.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++}
++
+ /* Notification icon box */
+ #notification-popup-box {
+   position: relative;
+   background-color: #fff;
+   background-clip: padding-box;
+   padding-left: 4px;
+   border-radius: 2.5px 0 0 2.5px;
+   border-width: 0 8px 0 0;
+@@ -1261,16 +1265,20 @@ toolbar[iconsize="small"] #feed-button {
+ #webapps-notification-icon {
+   list-style-image: url(chrome://browser/skin/webapps-16.png);
+ }
+ 
+ #plugins-notification-icon {
+   list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
+ }
+ 
++#getUserMedia-notification-icon {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++}
++
+ #treecolAutoCompleteImage {
+   max-width : 36px;
+ }
+ 
+ .ac-result-type-bookmark,
+ .autocomplete-treebody::-moz-tree-image(bookmark, treecolAutoCompleteImage) {
+   list-style-image: url("chrome://browser/skin/places/pageStarred.png");
+   width: 16px;
+diff --git a/browser/themes/gnomestripe/jar.mn b/browser/themes/gnomestripe/jar.mn
+--- a/browser/themes/gnomestripe/jar.mn
++++ b/browser/themes/gnomestripe/jar.mn
+@@ -1,50 +1,52 @@
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ browser.jar:
+ % skin browser classic/1.0 %skin/classic/browser/
+ % override chrome://global/skin/icons/warning-16.png moz-icon://stock/gtk-dialog-warning?size=menu
+-  skin/classic/browser/sanitizeDialog.css             (sanitizeDialog.css)
+-* skin/classic/browser/aboutPrivateBrowsing.css             (aboutPrivateBrowsing.css)
+-* skin/classic/browser/aboutSessionRestore.css        (aboutSessionRestore.css)
++  skin/classic/browser/sanitizeDialog.css
++* skin/classic/browser/aboutPrivateBrowsing.css
++* skin/classic/browser/aboutSessionRestore.css
+   skin/classic/browser/aboutSessionRestore-window-icon.png
+   skin/classic/browser/aboutCertError.css
+   skin/classic/browser/aboutCertError_sectionCollapsed.png
+   skin/classic/browser/aboutCertError_sectionCollapsed-rtl.png
+   skin/classic/browser/aboutCertError_sectionExpanded.png
+   skin/classic/browser/aboutSocialError.css
+ #ifdef MOZ_SERVICES_SYNC
+   skin/classic/browser/aboutSyncTabs.css
+ #endif
+   skin/classic/browser/actionicon-tab.png
+-* skin/classic/browser/browser.css                    (browser.css)
+-* skin/classic/browser/engineManager.css              (engineManager.css)
++* skin/classic/browser/browser.css
++* skin/classic/browser/engineManager.css
+   skin/classic/browser/Geolocation-16.png
+   skin/classic/browser/Geolocation-64.png
+   skin/classic/browser/Go-arrow.png
+   skin/classic/browser/identity.png
+   skin/classic/browser/identity-icons-generic.png
+   skin/classic/browser/identity-icons-https.png
+   skin/classic/browser/identity-icons-https-ev.png
+   skin/classic/browser/Info.png
+   skin/classic/browser/KUI-close.png
+   skin/classic/browser/monitor.png
+   skin/classic/browser/monitor_16-10.png
+ * skin/classic/browser/pageInfo.css
+   skin/classic/browser/pageInfo.png
+   skin/classic/browser/page-livemarks.png
+   skin/classic/browser/Privacy-16.png
+   skin/classic/browser/Privacy-48.png
+-  skin/classic/browser/searchbar.css                  (searchbar.css)
++  skin/classic/browser/searchbar.css
+   skin/classic/browser/Secure.png
+   skin/classic/browser/Security-broken.png
+   skin/classic/browser/setDesktopBackground.css
++  skin/classic/browser/shareUserMediaDevice-16.png
++  skin/classic/browser/shareUserMediaDevice-64.png
+   skin/classic/browser/Toolbar.png
+   skin/classic/browser/Toolbar-small.png
+   skin/classic/browser/urlbar-arrow.png
+   skin/classic/browser/downloads/buttons.png          (downloads/buttons.png)
+   skin/classic/browser/downloads/download-glow.png    (downloads/download-glow.png)
+   skin/classic/browser/downloads/download-notification.png (downloads/download-notification.png)
+   skin/classic/browser/downloads/downloads.css        (downloads/downloads.css)
+   skin/classic/browser/feeds/feedIcon.png             (feeds/feedIcon.png)
+diff --git a/browser/themes/gnomestripe/shareUserMediaDevice-16.png b/browser/themes/gnomestripe/shareUserMediaDevice-16.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
+GIT binary patch
+literal 854
+zc$@)N1F8IpP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV0000PbVXQnQ*UN;
+zcVTj606}DLVr3vnZDD6+Qe|Oed2z{QJOBU!_(?=TRCwBaQ(Z_?Q5^rBbMM`z&TTfe
+zrDoZOiVr<#D<YKY$*{m8EXsnQ=s^;sgdPfd@S#A$Fom!T3JNJB-zv$EvX@Yzs36g>
+zWOHlNeK<FFzfR{46^hY?%Q^7>|33b|a}HsQA>C)T=B_t6TpK_Lk;6WJaxvgd*GK*(
+za8~TED?ZrNVkvRERmow~839R#W6M83e)7KV?p*ltsxK`8p(b-#!}U&AZS(nH+yW)O
+zgn~>Jk^s!bMaV)XY-Sa~;qJa){Z}t&N+M$5#8sxU6K(hMYcDr?JQ0-V#Bi<Nf}NYK
+zpaR8|U&hVh2!>_^<m_uX&WOdqCp*N&)szEAiTl8gD}!$WK?MR-JU^R-(gGXCXH_H=
+zhUzU60*eX`_k<CV2}~w4rn~A+#irjrriOY!^_h!tZWF4CqHG3RRwjlflQ`KMKtoRe
+zBa;c_WlJc_<Mc@d;JMf<Pd9NFR1_pjc4h0xUU?}F2^xH1psv#oRR?sL!R^wpEtg<P
+z1^gie661wr9M<BhDq^y3q+*66AEMm>MF!C{FpiXyD*rW<J5_Wy=Avkw1)YOo{O~2Y
+zhz`P?N+zpWFxv}7a7Im5Kt#@LuoLhc09ny-uEvfcXBOIDhH!s4giI6VBD`oEoR-=!
+zs>DNnB|JB8gkd;Xb&+Fc*j?(t^a8`fkp*N>2C8!bP3J3*D;h{>@sOA5ni30t9~~8l
+zm;xIO#;S1#?E`+?c<SMV8U(}LiU8%k(dn^qrX^-mr{JG>bZa^2(JAPf3nS3VO#<9o
+zMVN^pxdP@hDv==OCmwY0E1;(c<ml`N&%2I0&;>p}<(X)3*(i?IxNxM}1-pf$T%-h;
+z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
+zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
+g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
+
+diff --git a/browser/themes/gnomestripe/shareUserMediaDevice-64.png b/browser/themes/gnomestripe/shareUserMediaDevice-64.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
+GIT binary patch
+literal 4204
+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
+CHRGfJ
+
+diff --git a/browser/themes/pinstripe/browser.css b/browser/themes/pinstripe/browser.css
+--- a/browser/themes/pinstripe/browser.css
++++ b/browser/themes/pinstripe/browser.css
+@@ -3022,16 +3022,20 @@ toolbarbutton.chevron > .toolbarbutton-m
+     list-style-image: url(chrome://browser/skin/webapps-16@2x.png);
+   }
+ }
+ 
+ #plugins-notification-icon {
+   list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
+ }
+ 
++#getUserMedia-notification-icon {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++}
++
+ .popup-notification-icon {
+   width: 64px;
+   height: 64px;
+   -moz-margin-end: 10px;
+ }
+ 
+ .popup-notification-icon[popupid="geolocation"] {
+   list-style-image: url(chrome://browser/skin/Geolocation-64.png);
+@@ -3102,16 +3106,20 @@ toolbarbutton.chevron > .toolbarbutton-m
+ .popup-notification-icon[popupid="password-change"] {
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ 
+ .popup-notification-icon[popupid="webapps-install"] {
+   list-style-image: url(chrome://browser/skin/webapps-64.png);
+ }
+ 
++.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++}
++
+ /* Popup Buttons */
+ #identity-popup-more-info-button {
+   @hudButton@
+   margin: 10px 0 0;
+   min-height: 0px;
+ }
+ 
+ #identity-popup-more-info-button:focus {
+diff --git a/browser/themes/pinstripe/jar.mn b/browser/themes/pinstripe/jar.mn
+--- a/browser/themes/pinstripe/jar.mn
++++ b/browser/themes/pinstripe/jar.mn
+@@ -52,16 +52,18 @@ browser.jar:
+   skin/classic/browser/reload-stop-go@2x.png
+   skin/classic/browser/searchbar-dropmarker.png
+   skin/classic/browser/searchbar-dropmarker@2x.png
+   skin/classic/browser/searchbar.css
+   skin/classic/browser/Search.png
+   skin/classic/browser/Search@2x.png
+   skin/classic/browser/Secure-Glyph.png
+   skin/classic/browser/Secure-Glyph@2x.png
++  skin/classic/browser/shareUserMediaDevice-16.png
++  skin/classic/browser/shareUserMediaDevice-64.png
+   skin/classic/browser/keyhole-circle.png
+   skin/classic/browser/Toolbar.png
+   skin/classic/browser/toolbarbutton-dropmarker.png
+   skin/classic/browser/urlbar-history-dropmarker.png
+   skin/classic/browser/urlbar-history-dropmarker@2x.png
+   skin/classic/browser/urlbar-arrow.png
+   skin/classic/browser/urlbar-arrow@2x.png
+   skin/classic/browser/urlbar-popup-blocked.png
+diff --git a/browser/themes/pinstripe/shareUserMediaDevice-16.png b/browser/themes/pinstripe/shareUserMediaDevice-16.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
+GIT binary patch
+literal 854
+zc$@)N1F8IpP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV0000PbVXQnQ*UN;
+zcVTj606}DLVr3vnZDD6+Qe|Oed2z{QJOBU!_(?=TRCwBaQ(Z_?Q5^rBbMM`z&TTfe
+zrDoZOiVr<#D<YKY$*{m8EXsnQ=s^;sgdPfd@S#A$Fom!T3JNJB-zv$EvX@Yzs36g>
+zWOHlNeK<FFzfR{46^hY?%Q^7>|33b|a}HsQA>C)T=B_t6TpK_Lk;6WJaxvgd*GK*(
+za8~TED?ZrNVkvRERmow~839R#W6M83e)7KV?p*ltsxK`8p(b-#!}U&AZS(nH+yW)O
+zgn~>Jk^s!bMaV)XY-Sa~;qJa){Z}t&N+M$5#8sxU6K(hMYcDr?JQ0-V#Bi<Nf}NYK
+zpaR8|U&hVh2!>_^<m_uX&WOdqCp*N&)szEAiTl8gD}!$WK?MR-JU^R-(gGXCXH_H=
+zhUzU60*eX`_k<CV2}~w4rn~A+#irjrriOY!^_h!tZWF4CqHG3RRwjlflQ`KMKtoRe
+zBa;c_WlJc_<Mc@d;JMf<Pd9NFR1_pjc4h0xUU?}F2^xH1psv#oRR?sL!R^wpEtg<P
+z1^gie661wr9M<BhDq^y3q+*66AEMm>MF!C{FpiXyD*rW<J5_Wy=Avkw1)YOo{O~2Y
+zhz`P?N+zpWFxv}7a7Im5Kt#@LuoLhc09ny-uEvfcXBOIDhH!s4giI6VBD`oEoR-=!
+zs>DNnB|JB8gkd;Xb&+Fc*j?(t^a8`fkp*N>2C8!bP3J3*D;h{>@sOA5ni30t9~~8l
+zm;xIO#;S1#?E`+?c<SMV8U(}LiU8%k(dn^qrX^-mr{JG>bZa^2(JAPf3nS3VO#<9o
+zMVN^pxdP@hDv==OCmwY0E1;(c<ml`N&%2I0&;>p}<(X)3*(i?IxNxM}1-pf$T%-h;
+z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
+zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
+g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
+
+diff --git a/browser/themes/pinstripe/shareUserMediaDevice-64.png b/browser/themes/pinstripe/shareUserMediaDevice-64.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
+GIT binary patch
+literal 4204
+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
+CHRGfJ
+
+diff --git a/browser/themes/winstripe/browser.css b/browser/themes/winstripe/browser.css
+--- a/browser/themes/winstripe/browser.css
++++ b/browser/themes/winstripe/browser.css
+@@ -2325,16 +2325,20 @@ toolbarbutton.bookmark-item[dragover="tr
+ .popup-notification-icon[popupid="password-change"] {
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ 
+ .popup-notification-icon[popupid="webapps-install"] {
+   list-style-image: url(chrome://browser/skin/webapps-64.png);
+ }
+ 
++.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++}
++
+ /* Notification icon box */
+ #notification-popup-box {
+   position: relative;
+   background-color: #fff;
+   background-clip: padding-box;
+   padding-left: 3px;
+   border-radius: 2.5px 0 0 2.5px;
+   border-width: 0 8px 0 0;
+@@ -2390,16 +2394,20 @@ toolbarbutton.bookmark-item[dragover="tr
+ #webapps-notification-icon {
+   list-style-image: url(chrome://browser/skin/webapps-16.png);
+ }
+ 
+ #plugins-notification-icon {
+   list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
+ }
+ 
++#getUserMedia-notification-icon {
++  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++}
++
+ #identity-popup-container {
+   min-width: 280px;
+ }
+ 
+ #download-monitor {
+   list-style-image: url("chrome://browser/skin/Toolbar.png");
+   -moz-image-region: rect(0, 108px, 18px, 90px);
+ }
+diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
+--- a/browser/themes/winstripe/jar.mn
++++ b/browser/themes/winstripe/jar.mn
+@@ -2,67 +2,69 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ browser.jar:
+ % skin browser classic/1.0 %skin/classic/browser/ os=WINNT osversion<6
+ % skin browser classic/1.0 %skin/classic/browser/ os!=WINNT
+ # NOTE: If you add a new file here, you'll need to add it to the aero
+ # section at the bottom of this file
+-        skin/classic/browser/sanitizeDialog.css                      (sanitizeDialog.css)
+-*       skin/classic/browser/aboutPrivateBrowsing.css                (aboutPrivateBrowsing.css)
+-*       skin/classic/browser/aboutSessionRestore.css                 (aboutSessionRestore.css)
++        skin/classic/browser/sanitizeDialog.css
++*       skin/classic/browser/aboutPrivateBrowsing.css
++*       skin/classic/browser/aboutSessionRestore.css
+         skin/classic/browser/aboutSessionRestore-window-icon.png     (preferences/application.png)
+         skin/classic/browser/aboutCertError.css
+         skin/classic/browser/aboutCertError_sectionCollapsed.png
+         skin/classic/browser/aboutCertError_sectionCollapsed-rtl.png
+         skin/classic/browser/aboutCertError_sectionExpanded.png
+         skin/classic/browser/aboutSocialError.css
+ #ifdef MOZ_SERVICES_SYNC
+         skin/classic/browser/aboutSyncTabs.css
+ #endif
+         skin/classic/browser/actionicon-tab.png
+         skin/classic/browser/appmenu-icons.png
+         skin/classic/browser/appmenu-dropmarker.png
+-*       skin/classic/browser/browser.css                             (browser.css)
+-*       skin/classic/browser/engineManager.css                       (engineManager.css)
++*       skin/classic/browser/browser.css
++*       skin/classic/browser/engineManager.css
+         skin/classic/browser/Geolocation-16.png
+         skin/classic/browser/Geolocation-64.png
+-        skin/classic/browser/webapps-16.png
+-        skin/classic/browser/webapps-64.png
+-        skin/classic/browser/Info.png                                (Info.png)
+-        skin/classic/browser/identity.png                            (identity.png)
++        skin/classic/browser/Info.png
++        skin/classic/browser/identity.png
+         skin/classic/browser/identity-icons-generic.png
+         skin/classic/browser/identity-icons-https.png
+         skin/classic/browser/identity-icons-https-ev.png
+         skin/classic/browser/keyhole-forward-mask.svg
+         skin/classic/browser/KUI-background.png
+         skin/classic/browser/KUI-close.png
++        skin/classic/browser/livemark-folder.png
++        skin/classic/browser/menu-back.png
++        skin/classic/browser/menu-forward.png
++        skin/classic/browser/monitor.png
++        skin/classic/browser/monitor_16-10.png
+         skin/classic/browser/pageInfo.css
+-        skin/classic/browser/pageInfo.png                            (pageInfo.png)
++        skin/classic/browser/pageInfo.png
+         skin/classic/browser/page-livemarks.png                      (feeds/feedIcon16.png)
+-        skin/classic/browser/livemark-folder.png                     (livemark-folder.png)
+         skin/classic/browser/Privacy-16.png
+         skin/classic/browser/Privacy-48.png
+         skin/classic/browser/reload-stop-go.png
+-        skin/classic/browser/Secure24.png                            (Secure24.png)
+-        skin/classic/browser/Toolbar.png                             (Toolbar.png)
++        skin/classic/browser/searchbar.css
++        skin/classic/browser/searchbar-dropdown-arrow.png
++        skin/classic/browser/Secure24.png
++        skin/classic/browser/setDesktopBackground.css
++        skin/classic/browser/shareUserMediaDevice-16.png
++        skin/classic/browser/shareUserMediaDevice-64.png
++        skin/classic/browser/Toolbar.png
+         skin/classic/browser/Toolbar-inverted.png
+         skin/classic/browser/toolbarbutton-dropdown-arrow.png
+         skin/classic/browser/toolbarbutton-dropdown-arrow-inverted.png
+-        skin/classic/browser/searchbar.css                           (searchbar.css)
+-        skin/classic/browser/searchbar-dropdown-arrow.png
+-        skin/classic/browser/setDesktopBackground.css
+-        skin/classic/browser/menu-back.png                           (menu-back.png)
+-        skin/classic/browser/menu-forward.png                        (menu-forward.png)
+-        skin/classic/browser/monitor.png
+-        skin/classic/browser/monitor_16-10.png
+         skin/classic/browser/urlbar-arrow.png
+         skin/classic/browser/urlbar-popup-blocked.png
+         skin/classic/browser/urlbar-history-dropmarker.png
++        skin/classic/browser/webapps-16.png
++        skin/classic/browser/webapps-64.png
+         skin/classic/browser/downloads/buttons.png                   (downloads/buttons.png)
+         skin/classic/browser/downloads/download-glow.png             (downloads/download-glow.png)
+         skin/classic/browser/downloads/download-notification.png     (downloads/download-notification.png)
+ *       skin/classic/browser/downloads/downloads.css                 (downloads/downloads.css)
+         skin/classic/browser/feeds/feedIcon.png                      (feeds/feedIcon.png)
+         skin/classic/browser/feeds/feedIcon16.png                    (feeds/feedIcon16.png)
+         skin/classic/browser/feeds/audioFeedIcon.png                 (feeds/feedIcon.png)
+         skin/classic/browser/feeds/audioFeedIcon16.png               (feeds/feedIcon16.png)
+@@ -217,55 +219,57 @@ browser.jar:
+         skin/classic/aero/browser/aboutCertError.css
+         skin/classic/aero/browser/aboutCertError_sectionCollapsed.png
+         skin/classic/aero/browser/aboutCertError_sectionCollapsed-rtl.png
+         skin/classic/aero/browser/aboutCertError_sectionExpanded.png
+         skin/classic/aero/browser/aboutSocialError.css
+ #ifdef MOZ_SERVICES_SYNC
+         skin/classic/aero/browser/aboutSyncTabs.css
+ #endif
+-        skin/classic/aero/browser/actionicon-tab.png                 (actionicon-tab.png)
++        skin/classic/aero/browser/actionicon-tab.png
+         skin/classic/aero/browser/appmenu-dropmarker.png
+         skin/classic/aero/browser/appmenu-icons.png
+ *       skin/classic/aero/browser/browser.css                        (browser-aero.css)
+-*       skin/classic/aero/browser/engineManager.css                  (engineManager.css)
++*       skin/classic/aero/browser/engineManager.css
+         skin/classic/aero/browser/Geolocation-16.png
+         skin/classic/aero/browser/Geolocation-64.png
+-        skin/classic/aero/browser/webapps-16.png
+-        skin/classic/aero/browser/webapps-64.png
+         skin/classic/aero/browser/Info.png                           (Info-aero.png)
+         skin/classic/aero/browser/identity.png                       (identity-aero.png)
+         skin/classic/aero/browser/identity-icons-generic.png
+         skin/classic/aero/browser/identity-icons-https.png
+         skin/classic/aero/browser/identity-icons-https-ev.png
+         skin/classic/aero/browser/keyhole-forward-mask.svg
+         skin/classic/aero/browser/KUI-background.png
+         skin/classic/aero/browser/KUI-close.png
++        skin/classic/aero/browser/livemark-folder.png                (livemark-folder-aero.png)
++        skin/classic/aero/browser/menu-back.png                      (menu-back-aero.png)
++        skin/classic/aero/browser/menu-forward.png                   (menu-forward-aero.png)
++        skin/classic/aero/browser/monitor.png
++        skin/classic/aero/browser/monitor_16-10.png
+         skin/classic/aero/browser/pageInfo.css
+         skin/classic/aero/browser/pageInfo.png                       (pageInfo-aero.png)
+         skin/classic/aero/browser/page-livemarks.png                 (feeds/feedIcon16-aero.png)
+-        skin/classic/aero/browser/livemark-folder.png                (livemark-folder-aero.png)
+         skin/classic/aero/browser/Privacy-16.png                     (Privacy-16-aero.png)
+         skin/classic/aero/browser/Privacy-48.png                     (Privacy-48-aero.png)
+         skin/classic/aero/browser/reload-stop-go.png
++        skin/classic/aero/browser/searchbar.css
++        skin/classic/aero/browser/searchbar-dropdown-arrow.png       (searchbar-dropdown-arrow-aero.png)
+         skin/classic/aero/browser/Secure24.png                       (Secure24-aero.png)
++        skin/classic/aero/browser/setDesktopBackground.css
++        skin/classic/aero/browser/shareUserMediaDevice-16.png
++        skin/classic/aero/browser/shareUserMediaDevice-64.png
+         skin/classic/aero/browser/Toolbar.png
+         skin/classic/aero/browser/Toolbar-inverted.png
+         skin/classic/aero/browser/toolbarbutton-dropdown-arrow.png
+         skin/classic/aero/browser/toolbarbutton-dropdown-arrow-inverted.png
+-        skin/classic/aero/browser/searchbar.css                      (searchbar.css)
+-        skin/classic/aero/browser/searchbar-dropdown-arrow.png       (searchbar-dropdown-arrow-aero.png)
+-        skin/classic/aero/browser/setDesktopBackground.css
+-        skin/classic/aero/browser/menu-back.png                      (menu-back-aero.png)
+-        skin/classic/aero/browser/menu-forward.png                   (menu-forward-aero.png)
+-        skin/classic/aero/browser/monitor.png
+-        skin/classic/aero/browser/monitor_16-10.png
+         skin/classic/aero/browser/urlbar-arrow.png
+         skin/classic/aero/browser/urlbar-popup-blocked.png
+         skin/classic/aero/browser/urlbar-history-dropmarker.png
++        skin/classic/aero/browser/webapps-16.png
++        skin/classic/aero/browser/webapps-64.png
+         skin/classic/aero/browser/downloads/buttons.png              (downloads/buttons-aero.png)
+         skin/classic/aero/browser/downloads/download-glow.png        (downloads/download-glow-aero.png)
+         skin/classic/aero/browser/downloads/download-notification.png (downloads/download-notification.png)
+ *       skin/classic/aero/browser/downloads/downloads.css            (downloads/downloads-aero.css)
+         skin/classic/aero/browser/feeds/feedIcon.png                 (feeds/feedIcon-aero.png)
+         skin/classic/aero/browser/feeds/feedIcon16.png               (feeds/feedIcon16-aero.png)
+         skin/classic/aero/browser/feeds/audioFeedIcon.png            (feeds/feedIcon-aero.png)
+         skin/classic/aero/browser/feeds/audioFeedIcon16.png          (feeds/feedIcon16-aero.png)
+diff --git a/browser/themes/winstripe/shareUserMediaDevice-16.png b/browser/themes/winstripe/shareUserMediaDevice-16.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
+GIT binary patch
+literal 854
+zc$@)N1F8IpP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV0000PbVXQnQ*UN;
+zcVTj606}DLVr3vnZDD6+Qe|Oed2z{QJOBU!_(?=TRCwBaQ(Z_?Q5^rBbMM`z&TTfe
+zrDoZOiVr<#D<YKY$*{m8EXsnQ=s^;sgdPfd@S#A$Fom!T3JNJB-zv$EvX@Yzs36g>
+zWOHlNeK<FFzfR{46^hY?%Q^7>|33b|a}HsQA>C)T=B_t6TpK_Lk;6WJaxvgd*GK*(
+za8~TED?ZrNVkvRERmow~839R#W6M83e)7KV?p*ltsxK`8p(b-#!}U&AZS(nH+yW)O
+zgn~>Jk^s!bMaV)XY-Sa~;qJa){Z}t&N+M$5#8sxU6K(hMYcDr?JQ0-V#Bi<Nf}NYK
+zpaR8|U&hVh2!>_^<m_uX&WOdqCp*N&)szEAiTl8gD}!$WK?MR-JU^R-(gGXCXH_H=
+zhUzU60*eX`_k<CV2}~w4rn~A+#irjrriOY!^_h!tZWF4CqHG3RRwjlflQ`KMKtoRe
+zBa;c_WlJc_<Mc@d;JMf<Pd9NFR1_pjc4h0xUU?}F2^xH1psv#oRR?sL!R^wpEtg<P
+z1^gie661wr9M<BhDq^y3q+*66AEMm>MF!C{FpiXyD*rW<J5_Wy=Avkw1)YOo{O~2Y
+zhz`P?N+zpWFxv}7a7Im5Kt#@LuoLhc09ny-uEvfcXBOIDhH!s4giI6VBD`oEoR-=!
+zs>DNnB|JB8gkd;Xb&+Fc*j?(t^a8`fkp*N>2C8!bP3J3*D;h{>@sOA5ni30t9~~8l
+zm;xIO#;S1#?E`+?c<SMV8U(}LiU8%k(dn^qrX^-mr{JG>bZa^2(JAPf3nS3VO#<9o
+zMVN^pxdP@hDv==OCmwY0E1;(c<ml`N&%2I0&;>p}<(X)3*(i?IxNxM}1-pf$T%-h;
+z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
+zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
+g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
+
+diff --git a/browser/themes/winstripe/shareUserMediaDevice-64.png b/browser/themes/winstripe/shareUserMediaDevice-64.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
+GIT binary patch
+literal 4204
+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
+CHRGfJ
+
