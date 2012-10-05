@@ -156,7 +156,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +
 +    // Convert window ID to string.
 +    char windowBuffer[32];
-+    snprintf(windowBuffer, 32, "%ld", aWindow->GetOuterWindow()->WindowID());
++    snprintf(windowBuffer, 32, "%lld", aWindow->GetOuterWindow()->WindowID());
 +    data.Append(NS_ConvertUTF8toUTF16(windowBuffer));
 +
 +    data.Append(NS_LITERAL_STRING(", \"callID\":\""));
