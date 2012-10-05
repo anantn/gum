@@ -1,7 +1,7 @@
 # HG changeset patch
-# Parent 4626e836a5deaf8774e90a75fda643bcc78cb793
+# Parent 625eeab0624069f1f23345cd168303c49b17f955
 # User Anant Narayanan <anant@kix.in>
-Hookup getUserMedia UI with DOM backend
+try: -b do -p all -u all -t all
 
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
@@ -37,7 +37,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +  {
 +    if (NS_IsMainThread()) {
 +      nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
-+      error->OnError(NS_LITERAL_STRING("PERMISSION_DENIED")); 
++      error->OnError(NS_LITERAL_STRING("PERMISSION_DENIED"));
 +    } else {
 +      NS_DispatchToMainThread(new ErrorCallbackRunnable(
 +        mSuccess, mError, NS_LITERAL_STRING("PERMISSION_DENIED"), mWindowID
@@ -110,7 +110,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
      );
    } else if (device) {
      // Stream from provided device.
-@@ -674,25 +688,45 @@ MediaManager::GetUserMedia(bool aPrivile
+@@ -674,25 +688,60 @@ MediaManager::GetUserMedia(bool aPrivile
        audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
        windowID
      );
@@ -138,18 +138,33 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    NS_ENSURE_SUCCESS(rv, rv);
  
 -    mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
++    // Generate a call ID.
 +    nsID id;
 +    rv = uuidgen->GenerateUUIDInPlace(&id);
 +    NS_ENSURE_SUCCESS(rv, rv);
 +
 +    char buffer[NSID_LENGTH];
 +    id.ToProvidedString(buffer);
-+
 +    NS_ConvertUTF8toUTF16 callID(buffer);
++
++    // Store the current callback.
 +    mActiveCallbacks.Put(callID, gUMRunnable);
 +
++    // Construct JSON structure with both the windowID and the callID.
++    nsAutoString data;
++    data.Append(NS_LITERAL_STRING("{\"windowID\":"));
++
++    // Convert window ID to string.
++    char windowBuffer[32];
++    snprintf(windowBuffer, 32, "%ld", aWindow->GetOuterWindow()->WindowID());
++    data.Append(NS_ConvertUTF8toUTF16(windowBuffer));
++
++    data.Append(NS_LITERAL_STRING(", \"callID\":\""));
++    data.Append(callID);
++    data.Append(NS_LITERAL_STRING("\"}"));
++
 +    nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
-+    obs->NotifyObservers(aParams, "getUserMedia:request", callID.get());
++    obs->NotifyObservers(aParams, "getUserMedia:request", data.get());
    }
 +
    return NS_OK;
@@ -160,7 +175,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
    nsIGetUserMediaDevicesSuccessCallback* aOnSuccess,
    nsIDOMGetUserMediaErrorCallback* aOnError)
  {
-@@ -757,23 +791,69 @@ MediaManager::OnNavigation(uint64_t aWin
+@@ -757,23 +806,69 @@ MediaManager::OnNavigation(uint64_t aWin
  
    mActiveWindows.Remove(aWindowID);
  }
@@ -172,7 +187,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 -  if (strcmp(aTopic, "xpcom-shutdown")) {
 +  NS_ASSERTION(NS_IsMainThread(), "Observer invoked off the main thread");
 +  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-+  
++
 +  if (!strcmp(aTopic, "xpcom-shutdown")) {
 +    obs->RemoveObserver(this, "xpcom-shutdown");
 +    obs->RemoveObserver(this, "getUserMedia:response:allow");
@@ -182,7 +197,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    mActiveWindows.Clear();
 +    mActiveCallbacks.Clear();
 +    sSingleton = nullptr;
-+    
++
      return NS_OK;
    }
  
@@ -194,16 +209,16 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +    if (!mActiveCallbacks.Get(key, getter_AddRefs(runnable))) {
 +      return NS_OK;
 +    }
-+    
+ 
+-  // Close off any remaining active windows.
+-  mActiveWindows.Clear();
+-  sSingleton = nullptr;
 +    // Reuse the same thread to save memory.
 +    if (!mMediaThread) {
 +      nsresult rv = NS_NewThread(getter_AddRefs(mMediaThread));
 +      NS_ENSURE_SUCCESS(rv, rv);
 +    }
- 
--  // Close off any remaining active windows.
--  mActiveWindows.Clear();
--  sSingleton = nullptr;
++
 +    if (aSubject) {
 +      // A particular device was chosen by the user.
 +      nsCOMPtr<nsIMediaDevice> device = do_QueryInterface(aSubject);
@@ -213,7 +228,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 +        gUMRunnable->SetDevice(static_cast<MediaDevice*>(device.get()));
 +      }
 +    }
-+     
++
 +    mMediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
 +    mActiveCallbacks.Remove(key);
 +    return NS_OK;

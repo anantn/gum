@@ -1,203 +1,72 @@
 # vim: se ft=diff :
 # HG changeset patch
-# Parent cb64683950d9102ad18042092c8becce1dde7376
-# User Dão Gottwald <dao@mozilla.com>
-# Date 2012-10-02 05:58
+# User Dão Gottwald <dao>
+# Date 2012-10-05 02:37
 Bug 729522 - "Implement WebRTC navigator.getUserMedia() user interface" []
-* * *
-Integrate getUserMedia UI with DOM backend
 
-diff --git a/browser/base/content/browser-getUserMedia.js b/browser/base/content/browser-getUserMedia.js
-new file mode 100644
---- /dev/null
-+++ b/browser/base/content/browser-getUserMedia.js
-@@ -0,0 +1,125 @@
-+# -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
-+# This Source Code Form is subject to the terms of the Mozilla Public
-+# License, v. 2.0. If a copy of the MPL was not distributed with this
-+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-+
-+let getUserMedia = {
-+
-+  init: function() {
-+    Services.obs.addObserver(this, "getUserMedia:request", false);
-+  },
-+
-+  uninit: function() {
-+    Services.obs.removeObserver(this, "getUserMedia:request");
-+  },
-+
-+  observe: function(aSubject, aTopic, aData) {
-+    if (aTopic != "getUserMedia:request") {
-+      return;
-+    }
-+    try {
-+      let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
-+      this.handleRequest(aData, params);
-+    } catch(e) {
-+      Cu.reportError(e);
-+    }
-+  },
-+
-+  handleRequest: function(aRequestID, aParams) {
-+    navigator.mozGetUserMediaDevices(
-+      function (devices) {
-+        this.prompt(aRequestID, aParams.audio, aParams.video, devices);
-+      }.bind(this),
-+      function (error) {
-+        Cu.reportError(error);
-+      }
-+    );
-+  },
-+
-+  prompt: function(aRequestID, aAudio, aVideo, aDevices) {
-+    let audioDevices = [];
-+    let videoDevices = [];
-+    for (let device of aDevices) {
-+      device = device.QueryInterface(Ci.nsIMediaDevice);
-+      switch (device.type) {
-+        case "audio":
-+          if (aAudio) {
-+            audioDevices.push(device);
-+          }
-+          break;
-+        case "video":
-+          if (aVideo) {
-+            videoDevices.push(device);
-+          }
-+          break;
-+      }
-+    }
-+
-+    let requestType;
-+    if (audioDevices.length && videoDevices.length) {
-+      requestType = "shareCameraAndMicrophone";
-+    } else if (audioDevices.length) {
-+      requestType = "shareMicrophone";
-+    } else if (videoDevices.length) {
-+      requestType = "shareCamera";
-+    } else {
-+      return;
-+    }
-+
-+    let browser = gBrowser.selectedBrowser;
-+    let host = browser.contentDocument.documentURIObject.asciiHost;
-+    let message = gNavigatorBundle.getFormattedString("getUserMedia." + requestType + ".message",
-+                                                      [ host ]);
-+
-+    let responseSent = false;
-+
-+    let mainAction = {
-+      label: gNavigatorBundle.getString("getUserMedia." + requestType + ".label"),
-+      accessKey: gNavigatorBundle.getString("getUserMedia." + requestType + ".accesskey"),
-+      callback: function() {
-+        Services.obs.notifyObservers(
-+          null, "getUserMedia:response:allow", aRequestID
-+        );
-+        responseSent = true;
-+      }
-+    };
-+
-+    let secondaryActions = [];
-+    let selectableDevices = videoDevices.length ? videoDevices : audioDevices;
-+    if (selectableDevices.length > 1) {
-+      let selectableDeviceNumber = 0;
-+      for (let device of selectableDevices) {
-+        secondaryActions.push({
-+          label: gNavigatorBundle.getFormattedString(
-+                   device.type == "audio" ?
-+                     "getUserMedia.shareSpecificMicrophone.label" :
-+                     "getUserMedia.shareSpecificCamera.label",
-+                   [ device.name ]),
-+          accessKey: ++selectableDeviceNumber,
-+          callback: function() {
-+            Services.obs.notifyObservers(
-+              device, "getUserMedia:response:allow", aRequestID
-+            );
-+            responseSent = true;
-+          }
-+        });
-+      }
-+    }
-+
-+    let options = {
-+      removeOnDismissal: true,
-+      eventCallback: function(aType) {
-+        if (!responseSent && aType == "removed") {
-+          Services.obs.notifyObservers(
-+            null, "getUserMedia:response:deny", aRequestID
-+          );
-+        }
-+      }
-+    };
-+
-+    let notification =
-+      PopupNotifications.show(browser, "getUserMedia-shareDevices", message,
-+                              "getUserMedia-notification-icon", mainAction,
-+                              secondaryActions, options);
-+  }
-+};
-diff --git a/browser/base/content/browser.js b/browser/base/content/browser.js
---- a/browser/base/content/browser.js
-+++ b/browser/base/content/browser.js
-@@ -164,16 +164,17 @@ let gInitialPages = [
-   "about:privatebrowsing",
-   "about:sessionrestore"
- ];
+diff --git a/browser/components/nsBrowserGlue.js b/browser/components/nsBrowserGlue.js
+--- a/browser/components/nsBrowserGlue.js
++++ b/browser/components/nsBrowserGlue.js
+@@ -39,16 +39,19 @@ XPCOMUtils.defineLazyModuleGetter(this, 
+                                   "resource:///modules/NewTabUtils.jsm");
  
- #include browser-addons.js
- #include browser-feeds.js
- #include browser-fullScreen.js
- #include browser-fullZoom.js
-+#include browser-getUserMedia.js
- #include browser-places.js
- #include browser-plugins.js
- #include browser-safebrowsing.js
- #include browser-social.js
- #include browser-tabPreviews.js
- #include browser-tabview.js
- #include browser-thumbnails.js
+ XPCOMUtils.defineLazyModuleGetter(this, "BrowserNewTabPreloader",
+                                   "resource:///modules/BrowserNewTabPreloader.jsm");
  
-@@ -1263,16 +1264,17 @@ var gBrowserInit = {
-     Services.obs.addObserver(gXPInstallObserver, "addon-install-complete", false);
-     Services.obs.addObserver(gFormSubmitObserver, "invalidformsubmit", false);
+ XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
+                                   "resource://pdf.js/PdfJs.jsm");
  
-     BrowserOffline.init();
-     OfflineApps.init();
-     IndexedDBPromptHelper.init();
-     gFormSubmitObserver.init();
-     SocialUI.init();
-+    getUserMedia.init();
-     AddonManager.addAddonListener(AddonsMgrListener);
++XPCOMUtils.defineLazyModuleGetter(this, "webrtcUI",
++                                  "resource:///modules/webrtcUI.jsm");
++
+ const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
+ const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
  
-     gBrowser.addEventListener("pageshow", function(event) {
-       // Filter out events that are not about the document load we are interested in
-       if (event.target == content.document)
-         setTimeout(pageShowEventHandlers, 0, event);
-     }, true);
+ // We try to backup bookmarks at idle times, to avoid doing that at shutdown.
+ // Number of idle seconds before trying to backup bookmarks.  15 minutes.
+ const BOOKMARKS_BACKUP_IDLE_TIME = 15 * 60;
+ // Minimum interval in milliseconds between backups.
+ const BOOKMARKS_BACKUP_INTERVAL = 86400 * 1000;
+@@ -315,16 +318,17 @@ BrowserGlue.prototype = {
+       os.removeObserver(this, "places-init-complete");
+     if (this._isPlacesLockedObserver)
+       os.removeObserver(this, "places-database-locked");
+     if (this._isPlacesShutdownObserver)
+       os.removeObserver(this, "places-shutdown");
+     UserAgentOverrides.uninit();
+     webappsUI.uninit();
+     SignInToWebsiteUX.uninit();
++    webrtcUI.uninit();
+   },
  
-@@ -1604,16 +1606,17 @@ var gBrowserInit = {
-         Cu.reportError(ex);
-       }
+   _onAppDefaults: function BG__onAppDefaults() {
+     // apply distribution customizations (prefs)
+     // other customizations are applied in _onProfileStartup()
+     this._distributionCustomizer.applyPrefDefaults();
+   },
  
-       BrowserOffline.uninit();
-       OfflineApps.uninit();
-       IndexedDBPromptHelper.uninit();
-       AddonManager.removeAddonListener(AddonsMgrListener);
-       SocialUI.uninit();
-+      getUserMedia.uninit();
-     }
+@@ -346,16 +350,17 @@ BrowserGlue.prototype = {
  
-     // Final window teardown, do this last.
-     window.XULBrowserWindow.destroy();
-     window.XULBrowserWindow = null;
-     window.QueryInterface(Ci.nsIInterfaceRequestor)
-           .getInterface(Ci.nsIWebNavigation)
-           .QueryInterface(Ci.nsIDocShellTreeItem).treeOwner
+     UserAgentOverrides.init();
+     webappsUI.init();
+     PageThumbs.init();
+     NewTabUtils.init();
+     BrowserNewTabPreloader.init();
+     SignInToWebsiteUX.init();
+     PdfJs.init();
++    webrtcUI.init();
+ 
+     Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
+   },
+ 
+   // the first browser window has finished initializing
+   _onFirstWindowLoaded: function BG__onFirstWindowLoaded() {
+ #ifdef XP_WIN
+     // For windows seven, initialize the jump list module.
 diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/locales/en-US/chrome/browser/browser.properties
 --- a/browser/locales/en-US/chrome/browser/browser.properties
 +++ b/browser/locales/en-US/chrome/browser/browser.properties
-@@ -418,8 +418,21 @@ identity.newIdentity.email.placeholder =
+@@ -418,8 +418,22 @@ identity.newIdentity.email.placeholder =
  identity.newIdentity.description = Enter your email address to sign in to %S
  identity.next.label = Next
  identity.next.accessKey = n
@@ -207,7 +76,8 @@ diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/l
  identity.loggedIn.signOut.label = Sign Out
  identity.loggedIn.signOut.accessKey = O
 +
-+# LOCALIZATION NOTE (getUserMedia.prompt.message): %S is the website origin (e.g. www.mozilla.org)
++# LOCALIZATION NOTE (getUserMedia.shareCamera.message, getUserMedia.shareMicrophone.message, getUserMedia.shareCameraAndMicrophone.message): %S is the website origin (e.g. www.mozilla.org)
++# LOCALIZATION NOTE (getUserMedia.shareMicrophone.message, getUserMedia.shareSpecificMicrophone.label): %S is the website origin (e.g. www.mozilla.org)
 +getUserMedia.shareCamera.message = Would you like to share your camera with %S?
 +getUserMedia.shareCamera.label = Share Camera
 +getUserMedia.shareCamera.accesskey = S
@@ -219,6 +89,155 @@ diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/l
 +getUserMedia.shareCameraAndMicrophone.message = Would you like to share your camera and microphone with %S?
 +getUserMedia.shareCameraAndMicrophone.label = Share Camera and Microphone
 +getUserMedia.shareCameraAndMicrophone.accesskey = S
+diff --git a/browser/modules/Makefile.in b/browser/modules/Makefile.in
+--- a/browser/modules/Makefile.in
++++ b/browser/modules/Makefile.in
+@@ -19,16 +19,17 @@ EXTRA_JS_MODULES = \
+ 	openLocationLastURL.jsm \
+ 	NetworkPrioritizer.jsm \
+ 	NewTabUtils.jsm \
+ 	offlineAppCache.jsm \
+ 	SignInToWebsite.jsm \
+ 	TelemetryTimestamps.jsm \
+ 	Social.jsm \
+ 	webappsUI.jsm \
++	webrtcUI.jsm \
+ 	$(NULL)
+ 
+ ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
+ EXTRA_JS_MODULES += \
+ 	WindowsPreviewPerTab.jsm \
+ 	WindowsJumpLists.jsm \
+ 	$(NULL)
+ endif
+diff --git a/browser/modules/webrtcUI.jsm b/browser/modules/webrtcUI.jsm
+new file mode 100644
+--- /dev/null
++++ b/browser/modules/webrtcUI.jsm
+@@ -0,0 +1,123 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++"use strict";
++
++let EXPORTED_SYMBOLS = ["webrtcUI"];
++
++const Cu = Components.utils;
++const Ci = Components.interfaces;
++
++Cu.import("resource://gre/modules/Services.jsm");
++
++let webrtcUI = {
++  init: function () {
++    Services.obs.addObserver(handleRequest, "getUserMedia:request", false);
++  },
++  uninit: function () {
++    Services.obs.removeObserver(handleRequest, "getUserMedia:request");
++  }
++}
++
++function handleRequest(aSubject, aTopic, aData) {
++  let {windowID: windowID, callID: callID} = JSON.parse(aData);
++
++  let someWindow = Services.wm.getMostRecentWindow(null);
++  let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
++                                .getInterface(Ci.nsIDOMWindowUtils)
++                                .getOuterWindowWithId(windowID);
++  let browser = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
++                             .getInterface(Ci.nsIWebNavigation)
++                             .QueryInterface(Ci.nsIDocShell)
++                             .chromeEventHandler;
++
++  let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
++
++  browser.ownerDocument.defaultView.navigator.mozGetUserMediaDevices(
++    function (devices) {
++      prompt(browser, callID, params.audio, params.video, devices);
++    },
++    function (error) {
++      Cu.reportError(error);
++    }
++  );
++}
++
++function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
++  let audioDevices = [];
++  let videoDevices = [];
++  for (let device of aDevices) {
++    device = device.QueryInterface(Ci.nsIMediaDevice);
++    switch (device.type) {
++      case "audio":
++        if (aAudioRequested)
++          audioDevices.push(device);
++        break;
++      case "video":
++        if (aVideoRequested)
++          videoDevices.push(device);
++        break;
++    }
++  }
++
++  let requestType;
++  if (audioDevices.length && videoDevices.length)
++    requestType = "shareCameraAndMicrophone";
++  else if (audioDevices.length)
++    requestType = "shareMicrophone";
++  else if (videoDevices.length)
++    requestType = "shareCamera";
++  else
++    return;
++
++  let host = aBrowser.contentDocument.documentURIObject.asciiHost;
++  let chromeWin = aBrowser.ownerDocument.defaultView;
++  let stringBundle = chromeWin.gNavigatorBundle;
++  let message = stringBundle.getFormattedString("getUserMedia." + requestType + ".message",
++                                                [ host ]);
++
++  let responseSent = false;
++
++  let mainAction = {
++    label: stringBundle.getString("getUserMedia." + requestType + ".label"),
++    accessKey: stringBundle.getString("getUserMedia." + requestType + ".accesskey"),
++    callback: function () {
++      Services.obs.notifyObservers(null, "getUserMedia:response:allow", aCallID);
++      responseSent = true;
++    }
++  };
++
++  let secondaryActions = [];
++  let selectableDevices = videoDevices.length ? videoDevices : audioDevices;
++  if (selectableDevices.length > 1) {
++    let selectableDeviceNumber = 0;
++    for (let device of selectableDevices) {
++      selectableDeviceNumber++;
++      secondaryActions.push({
++        label: stringBundle.getFormattedString(
++                 device.type == "audio" ?
++                   "getUserMedia.shareSpecificMicrophone.label" :
++                   "getUserMedia.shareSpecificCamera.label",
++                 [ device.name ]),
++        accessKey: selectableDeviceNumber,
++        callback: function () {
++          Services.obs.notifyObservers(device, "getUserMedia:response:allow", aCallID);
++          responseSent = true;
++        }
++      });
++    }
++  }
++
++  let options = {
++    removeOnDismissal: true,
++    eventCallback: function (aType) {
++      if (!responseSent && aType == "removed")
++        Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
++    }
++  };
++
++  chromeWin.PopupNotifications.show(aBrowser, "webRTC-shareDevices", message,
++                                    "webRTC-notification-icon", mainAction,
++                                    secondaryActions, options);
++}
 diff --git a/browser/themes/gnomestripe/browser.css b/browser/themes/gnomestripe/browser.css
 --- a/browser/themes/gnomestripe/browser.css
 +++ b/browser/themes/gnomestripe/browser.css
@@ -231,8 +250,8 @@ diff --git a/browser/themes/gnomestripe/browser.css b/browser/themes/gnomestripe
    list-style-image: url(chrome://browser/skin/webapps-64.png);
  }
  
-+.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++.popup-notification-icon[popupid="webRTC-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64.png);
 +}
 +
  /* Notification icon box */
@@ -252,8 +271,8 @@ diff --git a/browser/themes/gnomestripe/browser.css b/browser/themes/gnomestripe
    list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
  }
  
-+#getUserMedia-notification-icon {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++#webRTC-notification-icon {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-16.png);
 +}
 +
  #treecolAutoCompleteImage {
@@ -267,7 +286,7 @@ diff --git a/browser/themes/gnomestripe/browser.css b/browser/themes/gnomestripe
 diff --git a/browser/themes/gnomestripe/jar.mn b/browser/themes/gnomestripe/jar.mn
 --- a/browser/themes/gnomestripe/jar.mn
 +++ b/browser/themes/gnomestripe/jar.mn
-@@ -1,50 +1,52 @@
+@@ -1,53 +1,55 @@
  # This Source Code Form is subject to the terms of the Mozilla Public
  # License, v. 2.0. If a copy of the MPL was not distributed with this
  # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -316,17 +335,20 @@ diff --git a/browser/themes/gnomestripe/jar.mn b/browser/themes/gnomestripe/jar.
    skin/classic/browser/Secure.png
    skin/classic/browser/Security-broken.png
    skin/classic/browser/setDesktopBackground.css
-+  skin/classic/browser/shareUserMediaDevice-16.png
-+  skin/classic/browser/shareUserMediaDevice-64.png
    skin/classic/browser/Toolbar.png
    skin/classic/browser/Toolbar-small.png
    skin/classic/browser/urlbar-arrow.png
++  skin/classic/browser/webRTC-shareDevice-16.png
++  skin/classic/browser/webRTC-shareDevice-64.png
    skin/classic/browser/downloads/buttons.png          (downloads/buttons.png)
    skin/classic/browser/downloads/download-glow.png    (downloads/download-glow.png)
    skin/classic/browser/downloads/download-notification.png (downloads/download-notification.png)
    skin/classic/browser/downloads/downloads.css        (downloads/downloads.css)
    skin/classic/browser/feeds/feedIcon.png             (feeds/feedIcon.png)
-diff --git a/browser/themes/gnomestripe/shareUserMediaDevice-16.png b/browser/themes/gnomestripe/shareUserMediaDevice-16.png
+   skin/classic/browser/feeds/feedIcon16.png           (feeds/feedIcon16.png)
+   skin/classic/browser/feeds/videoFeedIcon.png        (feeds/feedIcon.png)
+   skin/classic/browser/feeds/videoFeedIcon16.png      (feeds/feedIcon16.png)
+diff --git a/browser/themes/gnomestripe/webRTC-shareDevice-16.png b/browser/themes/gnomestripe/webRTC-shareDevice-16.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
 GIT binary patch
@@ -349,7 +371,7 @@ z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
 zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
 g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
 
-diff --git a/browser/themes/gnomestripe/shareUserMediaDevice-64.png b/browser/themes/gnomestripe/shareUserMediaDevice-64.png
+diff --git a/browser/themes/gnomestripe/webRTC-shareDevice-64.png b/browser/themes/gnomestripe/webRTC-shareDevice-64.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
 GIT binary patch
@@ -449,8 +471,8 @@ diff --git a/browser/themes/pinstripe/browser.css b/browser/themes/pinstripe/bro
    list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
  }
  
-+#getUserMedia-notification-icon {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++#webRTC-notification-icon {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-16.png);
 +}
 +
  .popup-notification-icon {
@@ -470,8 +492,8 @@ diff --git a/browser/themes/pinstripe/browser.css b/browser/themes/pinstripe/bro
    list-style-image: url(chrome://browser/skin/webapps-64.png);
  }
  
-+.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++.popup-notification-icon[popupid="webRTC-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64.png);
 +}
 +
  /* Popup Buttons */
@@ -485,18 +507,7 @@ diff --git a/browser/themes/pinstripe/browser.css b/browser/themes/pinstripe/bro
 diff --git a/browser/themes/pinstripe/jar.mn b/browser/themes/pinstripe/jar.mn
 --- a/browser/themes/pinstripe/jar.mn
 +++ b/browser/themes/pinstripe/jar.mn
-@@ -52,16 +52,18 @@ browser.jar:
-   skin/classic/browser/reload-stop-go@2x.png
-   skin/classic/browser/searchbar-dropmarker.png
-   skin/classic/browser/searchbar-dropmarker@2x.png
-   skin/classic/browser/searchbar.css
-   skin/classic/browser/Search.png
-   skin/classic/browser/Search@2x.png
-   skin/classic/browser/Secure-Glyph.png
-   skin/classic/browser/Secure-Glyph@2x.png
-+  skin/classic/browser/shareUserMediaDevice-16.png
-+  skin/classic/browser/shareUserMediaDevice-64.png
-   skin/classic/browser/keyhole-circle.png
+@@ -61,16 +61,18 @@ browser.jar:
    skin/classic/browser/Toolbar.png
    skin/classic/browser/toolbarbutton-dropmarker.png
    skin/classic/browser/urlbar-history-dropmarker.png
@@ -504,7 +515,18 @@ diff --git a/browser/themes/pinstripe/jar.mn b/browser/themes/pinstripe/jar.mn
    skin/classic/browser/urlbar-arrow.png
    skin/classic/browser/urlbar-arrow@2x.png
    skin/classic/browser/urlbar-popup-blocked.png
-diff --git a/browser/themes/pinstripe/shareUserMediaDevice-16.png b/browser/themes/pinstripe/shareUserMediaDevice-16.png
+   skin/classic/browser/urlbar-popup-blocked@2x.png
++  skin/classic/browser/webRTC-shareDevice-16.png
++  skin/classic/browser/webRTC-shareDevice-64.png
+   skin/classic/browser/downloads/buttons.png                (downloads/buttons.png)
+   skin/classic/browser/downloads/download-glow.png          (downloads/download-glow.png)
+   skin/classic/browser/downloads/download-notification.png  (downloads/download-notification.png)
+   skin/classic/browser/downloads/downloads.css              (downloads/downloads.css)
+   skin/classic/browser/feeds/subscribe.css                  (feeds/subscribe.css)
+   skin/classic/browser/feeds/subscribe-ui.css               (feeds/subscribe-ui.css)
+   skin/classic/browser/feeds/feedIcon.png                   (feeds/feedIcon.png)
+   skin/classic/browser/feeds/feedIcon16.png                 (feeds/feedIcon16.png)
+diff --git a/browser/themes/pinstripe/webRTC-shareDevice-16.png b/browser/themes/pinstripe/webRTC-shareDevice-16.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
 GIT binary patch
@@ -527,7 +549,7 @@ z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
 zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
 g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
 
-diff --git a/browser/themes/pinstripe/shareUserMediaDevice-64.png b/browser/themes/pinstripe/shareUserMediaDevice-64.png
+diff --git a/browser/themes/pinstripe/webRTC-shareDevice-64.png b/browser/themes/pinstripe/webRTC-shareDevice-64.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
 GIT binary patch
@@ -627,8 +649,8 @@ diff --git a/browser/themes/winstripe/browser.css b/browser/themes/winstripe/bro
    list-style-image: url(chrome://browser/skin/webapps-64.png);
  }
  
-+.popup-notification-icon[popupid="getUserMedia-shareDevices"] {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-64.png);
++.popup-notification-icon[popupid="webRTC-shareDevices"] {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64.png);
 +}
 +
  /* Notification icon box */
@@ -648,8 +670,8 @@ diff --git a/browser/themes/winstripe/browser.css b/browser/themes/winstripe/bro
    list-style-image: url(chrome://mozapps/skin/plugins/pluginGeneric-16.png);
  }
  
-+#getUserMedia-notification-icon {
-+  list-style-image: url(chrome://browser/skin/shareUserMediaDevice-16.png);
++#webRTC-notification-icon {
++  list-style-image: url(chrome://browser/skin/webRTC-shareDevice-16.png);
 +}
 +
  #identity-popup-container {
@@ -727,8 +749,6 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
 +        skin/classic/browser/searchbar-dropdown-arrow.png
 +        skin/classic/browser/Secure24.png
 +        skin/classic/browser/setDesktopBackground.css
-+        skin/classic/browser/shareUserMediaDevice-16.png
-+        skin/classic/browser/shareUserMediaDevice-64.png
 +        skin/classic/browser/Toolbar.png
          skin/classic/browser/Toolbar-inverted.png
          skin/classic/browser/toolbarbutton-dropdown-arrow.png
@@ -745,6 +765,8 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
          skin/classic/browser/urlbar-history-dropmarker.png
 +        skin/classic/browser/webapps-16.png
 +        skin/classic/browser/webapps-64.png
++        skin/classic/browser/webRTC-shareDevice-16.png
++        skin/classic/browser/webRTC-shareDevice-64.png
          skin/classic/browser/downloads/buttons.png                   (downloads/buttons.png)
          skin/classic/browser/downloads/download-glow.png             (downloads/download-glow.png)
          skin/classic/browser/downloads/download-notification.png     (downloads/download-notification.png)
@@ -753,7 +775,7 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
          skin/classic/browser/feeds/feedIcon16.png                    (feeds/feedIcon16.png)
          skin/classic/browser/feeds/audioFeedIcon.png                 (feeds/feedIcon.png)
          skin/classic/browser/feeds/audioFeedIcon16.png               (feeds/feedIcon16.png)
-@@ -217,55 +219,57 @@ browser.jar:
+@@ -218,55 +220,57 @@ browser.jar:
          skin/classic/aero/browser/aboutCertError.css
          skin/classic/aero/browser/aboutCertError_sectionCollapsed.png
          skin/classic/aero/browser/aboutCertError_sectionCollapsed-rtl.png
@@ -797,8 +819,6 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
 +        skin/classic/aero/browser/searchbar-dropdown-arrow.png       (searchbar-dropdown-arrow-aero.png)
          skin/classic/aero/browser/Secure24.png                       (Secure24-aero.png)
 +        skin/classic/aero/browser/setDesktopBackground.css
-+        skin/classic/aero/browser/shareUserMediaDevice-16.png
-+        skin/classic/aero/browser/shareUserMediaDevice-64.png
          skin/classic/aero/browser/Toolbar.png
          skin/classic/aero/browser/Toolbar-inverted.png
          skin/classic/aero/browser/toolbarbutton-dropdown-arrow.png
@@ -815,6 +835,8 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
          skin/classic/aero/browser/urlbar-history-dropmarker.png
 +        skin/classic/aero/browser/webapps-16.png
 +        skin/classic/aero/browser/webapps-64.png
++        skin/classic/aero/browser/webRTC-shareDevice-16.png
++        skin/classic/aero/browser/webRTC-shareDevice-64.png
          skin/classic/aero/browser/downloads/buttons.png              (downloads/buttons-aero.png)
          skin/classic/aero/browser/downloads/download-glow.png        (downloads/download-glow-aero.png)
          skin/classic/aero/browser/downloads/download-notification.png (downloads/download-notification.png)
@@ -823,7 +845,7 @@ diff --git a/browser/themes/winstripe/jar.mn b/browser/themes/winstripe/jar.mn
          skin/classic/aero/browser/feeds/feedIcon16.png               (feeds/feedIcon16-aero.png)
          skin/classic/aero/browser/feeds/audioFeedIcon.png            (feeds/feedIcon-aero.png)
          skin/classic/aero/browser/feeds/audioFeedIcon16.png          (feeds/feedIcon16-aero.png)
-diff --git a/browser/themes/winstripe/shareUserMediaDevice-16.png b/browser/themes/winstripe/shareUserMediaDevice-16.png
+diff --git a/browser/themes/winstripe/webRTC-shareDevice-16.png b/browser/themes/winstripe/webRTC-shareDevice-16.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..0c8eafda08acf20c21eeef8ae63cc6630590084b
 GIT binary patch
@@ -846,7 +868,7 @@ z1n*c^zZ{x+@%L3GM6_?OZ!508)M{}QP>w*Y+m2X5$LQxM1kr@#;&05pzug=9`lN;9
 zqG=zKWG$@8tvJ?fE84Y36?2@_xGh>FyyzL92!4BZSB}gK{P#7k6$o(>G0Vlbl&MPr
 g-sel#_eX#M0Kal~wlU;xA^-pY07*qoM6N<$g5Uvyf&c&j
 
-diff --git a/browser/themes/winstripe/shareUserMediaDevice-64.png b/browser/themes/winstripe/shareUserMediaDevice-64.png
+diff --git a/browser/themes/winstripe/webRTC-shareDevice-64.png b/browser/themes/winstripe/webRTC-shareDevice-64.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..a1a51b8d8f580a7c97b449aed9ae60207a6a5373
 GIT binary patch
@@ -933,4 +955,5 @@ zfDrCNLPah0jAK<*Tg#uZtLINzg(C;-^3+*3o|oK`w&Er?Cf>j!GnWg1dLV>4FoG^A
 zZUm9)c4@h~=;pYpY`CPk%vRmk1};89_J+pg2B6-f@pXWRE(tEx13+DJ-1@_EnO!>I
 zcu60d`)vWx2u3pk{5$@ad^82%%{c!5;psO!0RIEVdZI>;B6AG@0000<MNUMnLSTY~
 CHRGfJ
+
 
