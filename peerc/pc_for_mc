@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 7f1694a507dd0fbef9987afa837d4f0b47952076
+# Parent c0a3f4b7e812791ca35294129d35858d5b60b93a
 
 diff --git a/dom/media/Makefile.in b/dom/media/Makefile.in
 --- a/dom/media/Makefile.in
@@ -1824,6 +1824,124 @@ deleted file mode 100644
 -</script>
 -
 -</html>
+diff --git a/dom/media/tests/local_video_test.html b/dom/media/tests/local_video_test.html
+deleted file mode 100644
+--- a/dom/media/tests/local_video_test.html
++++ /dev/null
+@@ -1,113 +0,0 @@
+-<html>
+-<head>
+-  <title>Simple PeerConnection Video Test</title>
+-</head>
+-<body>
+-
+-<h1>Simple PeerConnection Video Test</h1>
+-
+-<div><video id="pc1video" width="640" height="480" controls></video></div><br/>
+-<div><video id="pc2video" width="640" height="480" controls></video></div><br/>
+-
+-<div><button id="tehbutton" onClick="start();">Start!</button></div><br/>
+-<div id="log"></div>
+-
+-<div><video id="localvideo" width="640" height="480" controls></video></div><br/>
+-
+-<script type="application/javascript;version=1.8">
+-  function log(msg) {
+-    let div = document.getElementById("log");
+-    div.innerHTML = div.innerHTML + "<p>" + msg + "</p>";
+-  }
+-
+-  let pc1video = document.getElementById("pc1video");
+-  let pc2video = document.getElementById("pc2video");
+-
+-  let button = document.getElementById("tehbutton");
+-  let localvideo = document.getElementById("localvideo");
+-
+-  let pc1;
+-  let pc2;
+-
+-  let pc1_offer;
+-  let pc2_answer;
+-
+-  function failed(code) {
+-    log("Failure callback: " + code);
+-  }
+-
+-  // pc1.createOffer finished, call pc1.setLocal
+-  function step1(offer) {
+-    pc1_offer = offer;
+-    pc1.setLocalDescription(offer, step2, failed);
+-  }
+-
+-  // pc1.setLocal finished, call pc2.setRemote
+-  function step2() {
+-    pc2.setRemoteDescription(pc1_offer, step3, failed);
+-  };
+-
+-  // pc2.setRemote finished, call pc2.createAnswer
+-  function step3() {
+-    pc2.createAnswer(pc1_offer, step4, failed);
+-  }
+-
+-  // pc2.createAnswer finished, call pc2.setLocal
+-  function step4(answer) {
+-    pc2_answer = answer;
+-    pc2.setLocalDescription(answer, step5, failed);
+-  }
+-
+-  // pc2.setLocal finished, call pc1.setRemote
+-  function step5() {
+-    pc1.setRemoteDescription(pc2_answer, step6, failed);
+-  }
+-
+-  // pc1.setRemote finished, media should be running!
+-  function step6() {
+-    log("HIP HIP HOORAY");
+-  }
+-
+-  function start() {
+-    button.innerHTML = "Stop!";
+-    button.onclick = stop;
+-
+-    pc1 = new mozRTCPeerConnection();
+-    pc2 = new mozRTCPeerConnection();
+-
+-    pc1.onaddstream = function(obj) {
+-      log("pc1 got remote stream from pc2 " + obj.type);
+-      pc2video.mozSrcObject = obj.stream;
+-      pc2video.play();
+-    }
+-    pc2.onaddstream = function(obj) {
+-      log("pc2 got remote stream from pc1 " + obj.type);
+-      pc1video.mozSrcObject = obj.stream;
+-      pc1video.play();
+-    }
+-
+-    navigator.mozGetUserMedia({video:true}, function(stream) {
+-      // Add stream obtained from gUM to <video> to start media flow.
+-      localvideo.mozSrcObject = stream;
+-      localvideo.play();
+-
+-      pc1.addStream(stream);
+-      pc1.addStream(pc1.createFakeMediaStream("audio"));
+-      pc2.addStream(pc2.createFakeMediaStream("video"));
+-      pc2.addStream(pc2.createFakeMediaStream("audio"));
+-
+-      // Start the signaling.
+-      pc1.createOffer(step1, failed);
+-    }, failed);
+-  }
+-
+-  function stop() {
+-    pc1.close();
+-    pc2.close();
+-
+-    button.innerHTML = "Start!";
+-    button.onclick = start;
+-  }
+-</script>
+-
+-</html>
 diff --git a/dom/media/tests/raw_xpcshell_data.js b/dom/media/tests/raw_xpcshell_data.js
 deleted file mode 100644
 --- a/dom/media/tests/raw_xpcshell_data.js
@@ -2380,7 +2498,7 @@ diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/
  PeerConnectionImpl::CreateOffer(const char* hints) {
    MOZ_ASSERT(hints);
  
-@@ -903,16 +905,17 @@ PeerConnectionImpl::CloseStreams() {
+@@ -903,52 +905,50 @@ PeerConnectionImpl::CloseStreams() {
    if (mReadyState != PeerConnectionImpl::kClosed)  {
      ChangeReadyState(PeerConnectionImpl::kClosing);
    }
@@ -2398,7 +2516,26 @@ diff --git a/media/webrtc/signaling/src/peerconnection/PeerConnectionImpl.cpp b/
  
    if (fingerprint != NULL && (strcmp(hash, "sha-1") == 0)) {
      mRemoteFingerprint = std::string(fingerprint);
-@@ -939,16 +942,17 @@ PeerConnectionImpl::GetFingerprint(char*
+     CSFLogDebugS(logTag, "Setting remote fingerprint to " << mRemoteFingerprint);
+     return NS_OK;
+   } else {
+     CSFLogError(logTag, "%s: Invalid Remote Finger Print", __FUNCTION__);
+     return NS_ERROR_FAILURE;
+   }
+ }
+ 
+-/**
+- * @fingerprint[out]: Ownership of this parameter
+- *                    is responsibility of the caller.
+- */
+ NS_IMETHODIMP
+ PeerConnectionImpl::GetFingerprint(char** fingerprint)
+ {
+   MOZ_ASSERT(fingerprint);
+ 
+   if (!mIdentity) {
+     return NS_ERROR_FAILURE;
+   }
  
    char* tmp = new char[mFingerprint.size() + 1];
    std::copy(mFingerprint.begin(), mFingerprint.end(), tmp);

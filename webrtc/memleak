@@ -1,0 +1,113 @@
+# HG changeset patch
+# Parent 582b256202d164811968d315497c2568079ec437
+
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -223,17 +223,17 @@ public:
+   ~GetUserMediaStreamRunnable() {}
+ 
+   NS_IMETHOD
+   Run()
+   {
+     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+ 
+     // Create a media stream.
+-    nsCOMPtr<nsDOMMediaStream> stream;
++    nsRefPtr<nsDOMMediaStream> stream;
+     if (mTrackID == kVideoTrack) {
+       stream = nsDOMMediaStream::CreateInputStream(
+         nsDOMMediaStream::HINT_CONTENTS_VIDEO
+       );
+     } else {
+       stream = nsDOMMediaStream::CreateInputStream(
+         nsDOMMediaStream::HINT_CONTENTS_AUDIO
+       );
+@@ -244,18 +244,20 @@ public:
+ 
+     if (window && window->GetExtantDoc()) {
+       stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
+     }
+ 
+     // Add our listener. We'll call Start() on the source when get a callback
+     // that the MediaStream has started consuming. The listener is freed
+     // when the page is invalidated (on navigation or close).
++    SourceMediaStream* sourceStream = stream->GetStream()->AsSourceStream();
+     GetUserMediaCallbackMediaStreamListener* listener =
+-      new GetUserMediaCallbackMediaStreamListener(mSource, stream, mTrackID);
++      new GetUserMediaCallbackMediaStreamListener(
++        mSource, stream.get(), sourceStream, mTrackID);
+     stream->GetStream()->AddListener(listener);
+ 
+     // No need for locking because we always do this in the main thread.
+     mListeners->AppendElement(listener);
+ 
+     // We're in the main thread, so no worries here either.
+     nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
+     nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
+diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
+--- a/dom/media/MediaManager.h
++++ b/dom/media/MediaManager.h
+@@ -55,19 +55,21 @@ class GetUserMediaNotificationEvent: pub
+  * This class is an implementation of MediaStreamListener. This is used
+  * to Start() and Stop() the underlying MediaEngineSource when MediaStreams
+  * are assigned and deassigned in content.
+  */
+ class GetUserMediaCallbackMediaStreamListener : public MediaStreamListener
+ {
+ public:
+   GetUserMediaCallbackMediaStreamListener(MediaEngineSource* aSource,
+-    nsDOMMediaStream* aStream, TrackID aListenId)
++    already_AddRefed<nsDOMMediaStream> aStream, SourceMediaStream* aSourceStream,
++    TrackID aListenId)
+     : mSource(aSource)
+     , mStream(aStream)
++    , mSourceStream(aSourceStream)
+     , mID(aListenId)
+     , mValid(true) {}
+ 
+   void
+   Invalidate()
+   {
+     if (!mValid) {
+       return;
+@@ -82,18 +84,17 @@ public:
+ 
+     NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+   }
+ 
+   void
+   NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming)
+   {
+     if (aConsuming == CONSUMED) {
+-      SourceMediaStream* stream = mStream->GetStream()->AsSourceStream();
+-      mSource->Start(stream, mID);
++      mSource->Start(mSourceStream, mID);
+       nsCOMPtr<GetUserMediaNotificationEvent> event =
+         new GetUserMediaNotificationEvent(GetUserMediaNotificationEvent::STARTING);
+ 
+       NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+       return;
+     }
+ 
+     // NOT_CONSUMED
+@@ -105,17 +106,18 @@ public:
+   void NotifyOutput(MediaStreamGraph* aGraph) {}
+   void NotifyFinished(MediaStreamGraph* aGraph) {}
+   void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
+     TrackRate aTrackRate, TrackTicks aTrackOffset,
+     uint32_t aTrackEvents, const MediaSegment& aQueuedMedia) {}
+ 
+ private:
+   nsRefPtr<MediaEngineSource> mSource;
+-  nsCOMPtr<nsDOMMediaStream> mStream;
++  nsRefPtr<nsDOMMediaStream> mStream;
++  SourceMediaStream* mSourceStream;
+   TrackID mID;
+   bool mValid;
+ };
+ 
+ typedef nsTArray<nsRefPtr<GetUserMediaCallbackMediaStreamListener> > StreamListeners;
+ typedef nsClassHashtable<nsUint64HashKey, StreamListeners> WindowTable;
+ 
+ class MediaDevice : public nsIMediaDevice
