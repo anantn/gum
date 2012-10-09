@@ -1,0 +1,109 @@
+# HG changeset patch
+# Parent b046b1b2e283e5a82a0474cc72d717f0964234f2
+try: -b o -p android -u reftest,crashtest,xpcshell,jsreftest,jetpack,marionette,mochitests,reftest-1,reftest-2,reftest-3,reftest-4,jsreftest-1,jsreftest-2,jsreftest-3,crashtest-2,crashtest-3,mochitest-6,mochitest-7,mochitest-8,robocop -t none
+
+diff --git a/content/media/webrtc/MediaEngineDefault.cpp b/content/media/webrtc/MediaEngineDefault.cpp
+--- a/content/media/webrtc/MediaEngineDefault.cpp
++++ b/content/media/webrtc/MediaEngineDefault.cpp
+@@ -21,16 +21,45 @@
+ 
+ namespace mozilla {
+ 
+ NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineDefaultVideoSource, nsITimerCallback)
+ /**
+  * Default video source.
+  */
+ 
++// On Android, the picture must be obtained on the main thread.
++#ifdef MOZ_WIDGET_ANDROID
++class AndroidPictureRunnable : public nsRunnable {
++public:
++  AndroidPictureRunnable(nsIDOMFile** aFile)
++  : mFile(aFile) {}
++  ~AndroidPictureRunnable() {}
++
++  nsresult
++  Run()
++  {
++    nsAutoString filePath;
++    AndroidBridge::Bridge()->ShowFilePickerForMimeType(
++      filePath, NS_LITERAL_STRING("image/*")
++    );
++
++    nsCOMPtr<nsIFile> file;
++    nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(file));
++    NS_ENSURE_SUCCESS(rv, rv);
++
++    NS_ADDREF(*mFile = new nsDOMFileFile(file));
++    return NS_OK;
++  }
++
++private:
++  nsIDOMFile** mFile;
++};
++#endif
++
+ // Cannot be initialized in the class definition
+ const MediaEngineVideoOptions MediaEngineDefaultVideoSource::mOpts = {
+   DEFAULT_WIDTH,
+   DEFAULT_HEIGHT,
+   DEFAULT_FPS,
+   kVideoCodecI420
+ };
+ 
+@@ -171,25 +200,19 @@ MediaEngineDefaultVideoSource::Snapshot(
+   *aFile = nullptr;
+ 
+ #ifndef MOZ_WIDGET_ANDROID
+   return NS_ERROR_NOT_IMPLEMENTED;
+ #else
+   if (!AndroidBridge::Bridge()) {
+     return NS_ERROR_UNEXPECTED;
+   }
+-
+-  nsAutoString filePath;
+-  AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
+-
+-  nsCOMPtr<nsIFile> file;
+-  nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(file));
+-  NS_ENSURE_SUCCESS(rv, rv);
+-
+-  NS_ADDREF(*aFile = new nsDOMFileFile(file));
++  AndroidPictureRunnable* runnable = new AndroidPictureRunnable(aFile);
++  NS_DispatchToMainThread(runnable, NS_DISPATCH_SYNC);
++  delete runnable;
+   return NS_OK;
+ #endif
+ }
+ 
+ NS_IMETHODIMP
+ MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
+ {
+   VideoSegment segment;
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -707,20 +707,19 @@ MediaManager::GetUserMedia(bool aPrivile
+   } else {
+     // Stream from default device from WebRTC backend.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID
+     );
+   }
+ 
+-  if (picture) {
+-    // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
+-    NS_DispatchToMainThread(gUMRunnable);
+-  } else if (aPrivileged || fake) {
++  if (picture || aPrivileged || fake) {
++    // For pictures, privileged code and fake streams, no user permission is
++    // required.
+     if (!mMediaThread) {
+       nsresult rv = NS_NewThread(getter_AddRefs(mMediaThread));
+       NS_ENSURE_SUCCESS(rv, rv);
+     }
+     mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
+   } else {
+     // Ask for user permission, and dispatch runnable (or not) when a response
+     // is received via an observer notification. Each call is paired with its
