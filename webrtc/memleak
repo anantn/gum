@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 582b256202d164811968d315497c2568079ec437
+# Parent 186dd6443aec920244bf240dabff19c12cc30d41
 
 diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
 --- a/dom/media/MediaManager.cpp
@@ -23,7 +23,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
        stream = nsDOMMediaStream::CreateInputStream(
          nsDOMMediaStream::HINT_CONTENTS_AUDIO
        );
-@@ -244,18 +244,20 @@ public:
+@@ -244,19 +244,21 @@ public:
  
      if (window && window->GetExtantDoc()) {
        stream->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
@@ -32,12 +32,13 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
      // Add our listener. We'll call Start() on the source when get a callback
      // that the MediaStream has started consuming. The listener is freed
      // when the page is invalidated (on navigation or close).
-+    SourceMediaStream* sourceStream = stream->GetStream()->AsSourceStream();
++    MediaStream* mediaStream = stream->GetStream();
      GetUserMediaCallbackMediaStreamListener* listener =
 -      new GetUserMediaCallbackMediaStreamListener(mSource, stream, mTrackID);
+-    stream->GetStream()->AddListener(listener);
 +      new GetUserMediaCallbackMediaStreamListener(
-+        mSource, stream.get(), sourceStream, mTrackID);
-     stream->GetStream()->AddListener(listener);
++        mSource, stream.forget(), mediaStream->AsSourceStream(), mTrackID);
++    mediaStream->AddListener(listener);
  
      // No need for locking because we always do this in the main thread.
      mListeners->AppendElement(listener);
@@ -45,6 +46,7 @@ diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
      // We're in the main thread, so no worries here either.
      nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
      nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
+ 
 diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
 --- a/dom/media/MediaManager.h
 +++ b/dom/media/MediaManager.h
@@ -91,7 +93,7 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
      }
  
      // NOT_CONSUMED
-@@ -105,17 +106,18 @@ public:
+@@ -105,17 +106,20 @@ public:
    void NotifyOutput(MediaStreamGraph* aGraph) {}
    void NotifyFinished(MediaStreamGraph* aGraph) {}
    void NotifyQueuedTrackChanges(MediaStreamGraph* aGraph, TrackID aID,
@@ -102,6 +104,8 @@ diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
    nsRefPtr<MediaEngineSource> mSource;
 -  nsCOMPtr<nsDOMMediaStream> mStream;
 +  nsRefPtr<nsDOMMediaStream> mStream;
++  // We also store a reference to SourceMediaStream seperately, since we don't
++  // want to obtain one from mStream (notify methods are off the main thread).
 +  SourceMediaStream* mSourceStream;
    TrackID mID;
    bool mValid;
