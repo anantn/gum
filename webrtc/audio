@@ -1,0 +1,294 @@
+# HG changeset patch
+# Parent cae93af6b7a2bd13ad82f5ee4f8e63a33fff048a
+
+diff --git a/content/media/webrtc/MediaEngineWebRTC.cpp b/content/media/webrtc/MediaEngineWebRTC.cpp
+--- a/content/media/webrtc/MediaEngineWebRTC.cpp
++++ b/content/media/webrtc/MediaEngineWebRTC.cpp
+@@ -67,36 +67,36 @@ MediaEngineWebRTC::EnumerateVideoDevices
+ 
+     // paranoia
+     deviceName[0] = '\0';
+     uniqueId[0] = '\0';
+     int error = ptrViECapture->GetCaptureDevice(i, deviceName,
+                                                 sizeof(deviceName), uniqueId,
+                                                 sizeof(uniqueId));
+     if (error) {
+-      LOG((" VieCapture:GetCaptureDevice: Failed %d", 
++      LOG((" VieCapture:GetCaptureDevice: Failed %d",
+            ptrViEBase->LastError() ));
+       continue;
+     }
+     LOG(("  Capture Device Index %d, Name %s", i, deviceName));
+ 
+     webrtc::CaptureCapability cap;
+     int numCaps = ptrViECapture->NumberOfCapabilities(uniqueId, kMaxUniqueIdLength);
+     LOG(("Number of Capabilities %d", numCaps));
+     for (int j = 0; j < numCaps; j++) {
+-      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength, 
++      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength,
+                                               j, cap ) != 0 ) {
+         break;
+       }
+       LOG(("type=%d width=%d height=%d maxFPS=%d",
+            cap.rawType, cap.width, cap.height, cap.maxFPS ));
+     }
+ #endif
+ 
+-    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine, i);
++    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(i);
+     aVSources->AppendElement(vSource.forget());
+   }
+ 
+   ptrViEBase->Release();
+   ptrViECapture->Release();
+ 
+   return;
+ }
+@@ -138,17 +138,17 @@ MediaEngineWebRTC::EnumerateAudioDevices
+     char deviceName[128];
+     char uniqueID[128];
+     // paranoia; jingle doesn't bother with this
+     deviceName[0] = '\0';
+     uniqueID[0] = '\0';
+ 
+     ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueID);
+     nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(
+-      mVoiceEngine, i, deviceName, uniqueID
++      i, deviceName, uniqueID
+     );
+     aASources->AppendElement(aSource.forget());
+   }
+ 
+   ptrVoEHw->Release();
+   ptrVoEBase->Release();
+ }
+ 
+diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/MediaEngineWebRTC.h
+--- a/content/media/webrtc/MediaEngineWebRTC.h
++++ b/content/media/webrtc/MediaEngineWebRTC.h
+@@ -55,19 +55,29 @@ class MediaEngineWebRTCVideoSource : pub
+ public:
+   static const int DEFAULT_VIDEO_FPS = 30;
+   static const int DEFAULT_MIN_VIDEO_FPS = 10;
+ 
+   // ViEExternalRenderer.
+   virtual int FrameSizeChange(unsigned int, unsigned int, unsigned int);
+   virtual int DeliverFrame(unsigned char*, int, uint32_t, int64_t);
+ 
+-  MediaEngineWebRTCVideoSource(webrtc::VideoEngine* videoEnginePtr,
+-    int index, int aMinFps = DEFAULT_MIN_VIDEO_FPS);
+-  ~MediaEngineWebRTCVideoSource();
++  MediaEngineWebRTCVideoSource(int aIndex, int aMinFps = DEFAULT_MIN_VIDEO_FPS)
++    : mCaptureIndex(aIndex)
++    , mCapabilityChosen(false)
++    , mWidth(640)
++    , mHeight(480)
++    , mState(kReleased)
++    , mMonitor("WebRTCCamera.Monitor")
++    , mFps(DEFAULT_VIDEO_FPS)
++    , mMinFps(aMinFps)
++    , mInitDone(false)
++    , mInSnapshotMode(false)
++    , mSnapshotPath(NULL) { Init(); }
++  ~MediaEngineWebRTCVideoSource() { Shutdown(); };
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+   virtual const MediaEngineVideoOptions *GetOptions();
+   virtual nsresult Allocate();
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+   virtual nsresult Stop();
+@@ -137,31 +147,22 @@ private:
+   void ChooseCapability(uint32_t aWidth, uint32_t aHeight, uint32_t aMinFPS);
+   MediaEngineVideoOptions mOpts;
+ };
+ 
+ class MediaEngineWebRTCAudioSource : public MediaEngineAudioSource,
+                                      public webrtc::VoEMediaProcess
+ {
+ public:
+-  MediaEngineWebRTCAudioSource(webrtc::VoiceEngine* voiceEngine, int aIndex,
+-    const char* name, const char* uuid)
+-    : mVoiceEngine(voiceEngine)
+-    , mMonitor("WebRTCMic.Monitor")
++  MediaEngineWebRTCAudioSource(int aIndex, const char* name, const char* uuid)
++    : mMonitor("WebRTCMic.Monitor")
+     , mCapIndex(aIndex)
+     , mChannel(-1)
+     , mInitDone(false)
+-    , mState(kReleased) {
+-
+-    mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
+-    mDeviceName.Assign(NS_ConvertUTF8toUTF16(name));
+-    mDeviceUUID.Assign(NS_ConvertUTF8toUTF16(uuid));
+-    mInitDone = true;
+-  }
+-
++    , mState(kReleased) { Init(name, uuid); }
+   ~MediaEngineWebRTCAudioSource() { Shutdown(); }
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+ 
+   virtual nsresult Allocate();
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+@@ -174,17 +175,17 @@ public:
+                const int samplingFreq, const bool isStereo);
+ 
+   NS_DECL_ISUPPORTS
+ 
+ private:
+   static const unsigned int KMaxDeviceNameLength = 128;
+   static const unsigned int KMaxUniqueIdLength = 256;
+ 
+-  void Init();
++  void Init(const char* name, const char* uuid);
+   void Shutdown();
+ 
+   webrtc::VoiceEngine* mVoiceEngine;
+   webrtc::VoEBase* mVoEBase;
+   webrtc::VoEExternalMedia* mVoERender;
+ 
+   mozilla::ReentrantMonitor mMonitor;
+ 
+diff --git a/content/media/webrtc/MediaEngineWebRTCAudio.cpp b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
+--- a/content/media/webrtc/MediaEngineWebRTCAudio.cpp
++++ b/content/media/webrtc/MediaEngineWebRTCAudio.cpp
+@@ -168,16 +168,30 @@ MediaEngineWebRTCAudioSource::Stop()
+ }
+ 
+ nsresult
+ MediaEngineWebRTCAudioSource::Snapshot(uint32_t aDuration, nsIDOMFile** aFile)
+ {
+    return NS_ERROR_NOT_IMPLEMENTED;
+ }
+ 
++void
++MediaEngineWebRTCAudioSource::Init(const char* name, const char* uuid)
++{
++  mVoiceEngine = webrtc::VoiceEngine::Create();
++  mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
++
++  if (mVoEBase->Init() < 0) {
++    return;
++  }
++
++  mDeviceName.Assign(NS_ConvertUTF8toUTF16(name));
++  mDeviceUUID.Assign(NS_ConvertUTF8toUTF16(uuid));
++  mInitDone = true;
++}
+ 
+ void
+ MediaEngineWebRTCAudioSource::Shutdown()
+ {
+   if (!mInitDone) {
+     return;
+   }
+ 
+@@ -185,16 +199,17 @@ MediaEngineWebRTCAudioSource::Shutdown()
+     Stop();
+   }
+ 
+   if (mState == kAllocated) {
+     Deallocate();
+   }
+ 
+   mVoEBase->Release();
++  webrtc::VoiceEngine::Delete(mVoiceEngine);
+ 
+   mState = kReleased;
+   mInitDone = false;
+ }
+ 
+ typedef WebRtc_Word16 sample;
+ 
+ void
+diff --git a/content/media/webrtc/MediaEngineWebRTCVideo.cpp b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
+--- a/content/media/webrtc/MediaEngineWebRTCVideo.cpp
++++ b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
+@@ -9,39 +9,16 @@
+ 
+ namespace mozilla {
+ 
+ /**
+  * Webrtc video source.
+  */
+ NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineWebRTCVideoSource, nsIRunnable)
+ 
+-MediaEngineWebRTCVideoSource::MediaEngineWebRTCVideoSource(webrtc::VideoEngine* aVideoEnginePtr,
+-                                                           int aIndex, int aMinFps)
+-  : mVideoEngine(aVideoEnginePtr)
+-  , mCaptureIndex(aIndex)
+-  , mCapabilityChosen(false)
+-  , mWidth(640)
+-  , mHeight(480)
+-  , mState(kReleased)
+-  , mMonitor("WebRTCCamera.Monitor")
+-  , mFps(DEFAULT_VIDEO_FPS)
+-  , mMinFps(aMinFps)
+-  , mInitDone(false)
+-  , mInSnapshotMode(false)
+-  , mSnapshotPath(NULL)
+-{
+-  Init();
+-}
+-
+-MediaEngineWebRTCVideoSource::~MediaEngineWebRTCVideoSource()
+-{
+-  Shutdown();
+-}
+-
+ // ViEExternalRenderer Callback.
+ int
+ MediaEngineWebRTCVideoSource::FrameSizeChange(
+    unsigned int w, unsigned int h, unsigned int streams)
+ {
+   mWidth = w;
+   mHeight = h;
+   return 0;
+@@ -366,22 +343,22 @@ MediaEngineWebRTCVideoSource::Snapshot(u
+  */
+ 
+ void
+ MediaEngineWebRTCVideoSource::Init()
+ {
+   mDeviceName[0] = '\0'; // paranoia
+   mUniqueId[0] = '\0';
+ 
+-  if (mVideoEngine == NULL) {
++  mVideoEngine = webrtc::VideoEngine::Create();
++  mViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
++  if (mViEBase == NULL) {
+     return;
+   }
+-
+-  mViEBase = webrtc::ViEBase::GetInterface(mVideoEngine);
+-  if (mViEBase == NULL) {
++  if (mViEBase->Init() < 0) {
+     return;
+   }
+ 
+   // Get interfaces for capture, render for now
+   mViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
+   mViERender = webrtc::ViERender::GetInterface(mVideoEngine);
+ 
+   if (mViECapture == NULL || mViERender == NULL) {
+@@ -416,13 +393,16 @@ MediaEngineWebRTCVideoSource::Shutdown()
+     mViECapture->StopCapture(mCaptureIndex);
+     mViECapture->ReleaseCaptureDevice(mCaptureIndex);
+     continueShutdown = false;
+   }
+ 
+   mViECapture->Release();
+   mViERender->Release();
+   mViEBase->Release();
++
++  webrtc::VideoEngine::Delete(mVideoEngine);
++
+   mState = kReleased;
+   mInitDone = false;
+ }
+ 
+ }
