@@ -1,0 +1,674 @@
+# HG changeset patch
+# Parent 582b256202d164811968d315497c2568079ec437
+
+diff --git a/content/media/webrtc/MediaEngine.h b/content/media/webrtc/MediaEngine.h
+--- a/content/media/webrtc/MediaEngine.h
++++ b/content/media/webrtc/MediaEngine.h
+@@ -71,18 +71,30 @@ public:
+    * image, and for audio, it is a snippet lasting aDuration milliseconds. The
+    * duration argument is ignored for a MediaEngineVideoSource.
+    */
+   virtual nsresult Snapshot(uint32_t aDuration, nsIDOMFile** aFile) = 0;
+ 
+   /* Stop the device and release the corresponding MediaStream */
+   virtual nsresult Stop() = 0;
+ 
++  /* Return false if device is currently allocated or started */
++  bool IsAvailable() {
++    if (mState == kAllocated || mState == kStarted) {
++      return false;
++    } else {
++      return true;
++    }
++  }
++
+   /* It is an error to call Start() before an Allocate(), and Stop() before
+    * a Start(). Only Allocate() may be called after a Deallocate(). */
++
++protected:
++  MediaEngineState mState;
+ };
+ 
+ /**
+  * Video source and friends.
+  */
+ enum MediaEngineVideoCodecType {
+   kVideoCodecH263,
+   kVideoCodecVP8,
+diff --git a/content/media/webrtc/MediaEngineDefault.cpp b/content/media/webrtc/MediaEngineDefault.cpp
+--- a/content/media/webrtc/MediaEngineDefault.cpp
++++ b/content/media/webrtc/MediaEngineDefault.cpp
+@@ -30,18 +30,20 @@ NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngin
+ const MediaEngineVideoOptions MediaEngineDefaultVideoSource::mOpts = {
+   DEFAULT_WIDTH,
+   DEFAULT_HEIGHT,
+   DEFAULT_FPS,
+   kVideoCodecI420
+ };
+ 
+ MediaEngineDefaultVideoSource::MediaEngineDefaultVideoSource()
+-  : mTimer(nullptr), mState(kReleased)
+-{}
++  : mTimer(nullptr)
++{
++  mState = kReleased;
++}
+ 
+ MediaEngineDefaultVideoSource::~MediaEngineDefaultVideoSource()
+ {}
+ 
+ void
+ MediaEngineDefaultVideoSource::GetName(nsAString& aName)
+ {
+   aName.Assign(NS_LITERAL_STRING("Default Video Device"));
+@@ -200,16 +202,25 @@ MediaEngineDefaultVideoSource::Notify(ns
+ 
+   return NS_OK;
+ }
+ 
+ NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineDefaultAudioSource, nsITimerCallback)
+ /**
+  * Default audio source.
+  */
++MediaEngineDefaultAudioSource::MediaEngineDefaultAudioSource()
++  : mTimer(nullptr)
++{
++  mState = kReleased;
++}
++
++MediaEngineDefaultAudioSource::~MediaEngineDefaultAudioSource()
++{}
++
+ void
+ MediaEngineDefaultAudioSource::GetName(nsAString& aName)
+ {
+   aName.Assign(NS_LITERAL_STRING("Default Audio Device"));
+   return;
+ }
+ 
+ void
+@@ -307,19 +318,49 @@ MediaEngineDefaultAudioSource::Notify(ns
+ 
+   mSource->AppendToTrack(mTrackID, &segment);
+ 
+   return NS_OK;
+ }
+ 
+ void
+ MediaEngineDefault::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >* aVSources) {
+-  aVSources->AppendElement(mVSource);
++  int32_t found = false;
++  int32_t len = mVSources.Length();
++  for (int32_t i = 0; i < len; i++) {
++    nsRefPtr<MediaEngineVideoSource> source = mVSources.ElementAt(i);
++    aVSources->AppendElement(source);
++    if (source->IsAvailable()) {
++      found = true;
++    }
++  }
++
++  // All streams are currently busy, just make a new one.
++  if (!found) {
++    nsRefPtr<MediaEngineVideoSource> newSource =
++      new MediaEngineDefaultVideoSource();
++    mVSources.AppendElement(newSource);
++    aVSources->AppendElement(newSource);
++  }
+   return;
+ }
+ 
+ void
+ MediaEngineDefault::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >* aASources) {
+-  aASources->AppendElement(mASource);
++  int32_t len = mVSources.Length();
++  for (int32_t i = 0; i < len; i++) {
++    nsRefPtr<MediaEngineAudioSource> source = mASources.ElementAt(i);
++    if (source->IsAvailable()) {
++      aASources->AppendElement(source);
++    }
++  }
++
++  // All streams are currently busy, just make a new one.
++  if (aASources->Length() == 0) {
++    nsRefPtr<MediaEngineAudioSource> newSource =
++      new MediaEngineDefaultAudioSource();
++    mASources.AppendElement(newSource);
++    aASources->AppendElement(newSource);
++  }
+   return;
+ }
+ 
+ } // namespace mozilla
+diff --git a/content/media/webrtc/MediaEngineDefault.h b/content/media/webrtc/MediaEngineDefault.h
+--- a/content/media/webrtc/MediaEngineDefault.h
++++ b/content/media/webrtc/MediaEngineDefault.h
+@@ -36,17 +36,16 @@ public:
+   MediaEngineDefaultVideoSource();
+   ~MediaEngineDefaultVideoSource();
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+ 
+   virtual const MediaEngineVideoOptions *GetOptions();
+   virtual nsresult Allocate();
+-
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+   virtual nsresult Stop();
+   virtual nsresult Snapshot(uint32_t aDuration, nsIDOMFile** aFile);
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSITIMERCALLBACK
+ 
+@@ -55,62 +54,58 @@ public:
+   static const int DEFAULT_HEIGHT=480;
+   static const int DEFAULT_FPS=30;
+ 
+ protected:
+   TrackID mTrackID;
+   nsCOMPtr<nsITimer> mTimer;
+   nsRefPtr<layers::ImageContainer> mImageContainer;
+ 
+-  MediaEngineState mState;
++  //MediaEngineState mState;
+   SourceMediaStream* mSource;
+   layers::PlanarYCbCrImage* mImage;
+   static const MediaEngineVideoOptions mOpts;
+ };
+ 
+ class MediaEngineDefaultAudioSource : public nsITimerCallback,
+                                       public MediaEngineAudioSource
+ {
+ public:
+-  MediaEngineDefaultAudioSource() : mTimer(nullptr), mState(kReleased) {}
+-  ~MediaEngineDefaultAudioSource(){};
++  MediaEngineDefaultAudioSource();
++  ~MediaEngineDefaultAudioSource();
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+ 
+   virtual nsresult Allocate();
+-
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+   virtual nsresult Stop();
+   virtual nsresult Snapshot(uint32_t aDuration, nsIDOMFile** aFile);
+ 
+   NS_DECL_ISUPPORTS
+   NS_DECL_NSITIMERCALLBACK
+ 
+ protected:
+   TrackID mTrackID;
+   nsCOMPtr<nsITimer> mTimer;
+ 
+-  MediaEngineState mState;
++  //MediaEngineState mState;
+   SourceMediaStream* mSource;
+ };
+ 
+ class MediaEngineDefault : public MediaEngine
+ {
+ public:
+-  MediaEngineDefault() {
+-    mVSource = new MediaEngineDefaultVideoSource();
+-    mASource = new MediaEngineDefaultAudioSource();
+-  }
++  MediaEngineDefault() {}
+   ~MediaEngineDefault() {}
+ 
+   virtual void EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >*);
+   virtual void EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >*);
+ 
+ private:
+-  nsRefPtr<MediaEngineVideoSource> mVSource;
+-  nsRefPtr<MediaEngineAudioSource> mASource;
++  nsTArray<nsRefPtr<MediaEngineVideoSource> > mVSources;
++  nsTArray<nsRefPtr<MediaEngineAudioSource> > mASources;
+ };
+ 
+ }
+ 
+ #endif /* NSMEDIAENGINEDEFAULT_H_ */
+diff --git a/content/media/webrtc/MediaEngineWebRTC.cpp b/content/media/webrtc/MediaEngineWebRTC.cpp
+--- a/content/media/webrtc/MediaEngineWebRTC.cpp
++++ b/content/media/webrtc/MediaEngineWebRTC.cpp
+@@ -48,56 +48,73 @@ MediaEngineWebRTC::EnumerateVideoDevices
+     mVideoEngineInit = true;
+   }
+ 
+   ptrViECapture = webrtc::ViECapture::GetInterface(mVideoEngine);
+   if (!ptrViECapture) {
+     return;
+   }
+ 
++  /**
++   * We still enumerate every time, in case a new device was plugged in since
++   * the last call. TODO: Verify that WebRTC actually does deal with hotplugging
++   * new devices (with or without new engine creation) and accordingly adjust.
++   * Enumeration is not neccessary if GIPS reports the same set of devices
++   * for a given instance of the engine. Likewise, if a device was plugged out,
++   * mVideoSources must be updated.
++   */
+   int num = ptrViECapture->NumberOfCaptureDevices();
+   if (num <= 0) {
+     return;
+   }
+ 
+   for (int i = 0; i < num; i++) {
+-#ifdef DEBUG
+     const unsigned int kMaxDeviceNameLength = 128; // XXX FIX!
+     const unsigned int kMaxUniqueIdLength = 256;
+     char deviceName[kMaxDeviceNameLength];
+     char uniqueId[kMaxUniqueIdLength];
+ 
+     // paranoia
+     deviceName[0] = '\0';
+     uniqueId[0] = '\0';
+     int error = ptrViECapture->GetCaptureDevice(i, deviceName,
+                                                 sizeof(deviceName), uniqueId,
+                                                 sizeof(uniqueId));
++
++#ifdef DEBUG
+     if (error) {
+-      LOG((" VieCapture:GetCaptureDevice: Failed %d", 
++      LOG((" VieCapture:GetCaptureDevice: Failed %d",
+            ptrViEBase->LastError() ));
+       continue;
+     }
+     LOG(("  Capture Device Index %d, Name %s", i, deviceName));
+ 
+     webrtc::CaptureCapability cap;
+     int numCaps = ptrViECapture->NumberOfCapabilities(uniqueId, kMaxUniqueIdLength);
+     LOG(("Number of Capabilities %d", numCaps));
+     for (int j = 0; j < numCaps; j++) {
+-      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength, 
++      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength,
+                                               j, cap ) != 0 ) {
+         break;
+       }
+       LOG(("type=%d width=%d height=%d maxFPS=%d",
+            cap.rawType, cap.width, cap.height, cap.maxFPS ));
+     }
+ #endif
+ 
+-    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine, i);
+-    aVSources->AppendElement(vSource.forget());
++    nsRefPtr<MediaEngineWebRTCVideoSource> vSource;
++    NS_ConvertUTF8toUTF16 uuid(uniqueId);
++    if (mVideoSources.Get(uuid, getter_AddRefs(vSource))) {
++      // We've already seen this device, just append.
++      aVSources->AppendElement(vSource.get());
++    } else {
++      vSource = new MediaEngineWebRTCVideoSource(mVideoEngine, i);
++      mVideoSources.Put(uuid, vSource); // Hashtable takes ownership.
++      aVSources->AppendElement(vSource);
++    }
+   }
+ 
+   ptrViEBase->Release();
+   ptrViECapture->Release();
+ 
+   return;
+ }
+ 
+@@ -131,41 +148,51 @@ MediaEngineWebRTC::EnumerateAudioDevices
+     return;
+   }
+ 
+   int nDevices = 0;
+   ptrVoEHw->GetNumOfRecordingDevices(nDevices);
+   for (int i = 0; i < nDevices; i++) {
+     // We use constants here because GetRecordingDeviceName takes char[128].
+     char deviceName[128];
+-    char uniqueID[128];
++    char uniqueId[128];
+     // paranoia; jingle doesn't bother with this
+     deviceName[0] = '\0';
+-    uniqueID[0] = '\0';
++    uniqueId[0] = '\0';
+ 
+-    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueID);
+-    nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(
+-      mVoiceEngine, i, deviceName, uniqueID
+-    );
+-    aASources->AppendElement(aSource.forget());
++    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueId);
++
++    nsRefPtr<MediaEngineWebRTCAudioSource> aSource;
++    NS_ConvertUTF8toUTF16 uuid(uniqueId);
++    if (mAudioSources.Get(uuid, getter_AddRefs(aSource))) {
++      // We've already seen this device, just append.
++      aASources->AppendElement(aSource.get());
++    } else {
++      aSource = new MediaEngineWebRTCAudioSource(
++        mVoiceEngine, i, deviceName, uniqueId
++      );
++      mAudioSources.Put(uuid, aSource); // Hashtable takes ownership.
++      aASources->AppendElement(aSource);
++    }
+   }
+ 
+   ptrVoEHw->Release();
+   ptrVoEBase->Release();
+ }
+ 
+-
+ void
+ MediaEngineWebRTC::Shutdown()
+ {
+   if (mVideoEngine) {
++    mVideoSources.Clear();
+     webrtc::VideoEngine::Delete(mVideoEngine);
+   }
+ 
+   if (mVoiceEngine) {
++    mAudioSources.Clear();
+     webrtc::VoiceEngine::Delete(mVoiceEngine);
+   }
+ 
+   mVideoEngine = NULL;
+   mVoiceEngine = NULL;
+ }
+ 
+ }
+diff --git a/content/media/webrtc/MediaEngineWebRTC.h b/content/media/webrtc/MediaEngineWebRTC.h
+--- a/content/media/webrtc/MediaEngineWebRTC.h
++++ b/content/media/webrtc/MediaEngineWebRTC.h
+@@ -55,19 +55,33 @@ class MediaEngineWebRTCVideoSource : pub
+ public:
+   static const int DEFAULT_VIDEO_FPS = 30;
+   static const int DEFAULT_MIN_VIDEO_FPS = 10;
+ 
+   // ViEExternalRenderer.
+   virtual int FrameSizeChange(unsigned int, unsigned int, unsigned int);
+   virtual int DeliverFrame(unsigned char*, int, uint32_t, int64_t);
+ 
+-  MediaEngineWebRTCVideoSource(webrtc::VideoEngine* videoEnginePtr,
+-    int index, int aMinFps = DEFAULT_MIN_VIDEO_FPS);
+-  ~MediaEngineWebRTCVideoSource();
++  MediaEngineWebRTCVideoSource(webrtc::VideoEngine* aVideoEnginePtr,
++    int aIndex, int aMinFps = DEFAULT_MIN_VIDEO_FPS)
++    : mVideoEngine(aVideoEnginePtr)
++    , mCaptureIndex(aIndex)
++    , mCapabilityChosen(false)
++    , mWidth(640)
++    , mHeight(480)
++    , mMonitor("WebRTCCamera.Monitor")
++    , mFps(DEFAULT_VIDEO_FPS)
++    , mMinFps(aMinFps)
++    , mInitDone(false)
++    , mInSnapshotMode(false)
++    , mSnapshotPath(NULL) {
++    mState = kReleased;
++    Init();
++  }
++  ~MediaEngineWebRTCVideoSource() { Shutdown(); }
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+   virtual const MediaEngineVideoOptions *GetOptions();
+   virtual nsresult Allocate();
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+   virtual nsresult Stop();
+@@ -110,17 +124,17 @@ private:
+   webrtc::ViERender* mViERender;
+   webrtc::CaptureCapability mCapability; // Doesn't work on OS X.
+ 
+   int mCaptureIndex;
+   bool mCapabilityChosen;
+   int mWidth, mHeight;
+   TrackID mTrackID;
+ 
+-  MediaEngineState mState;
++  //MediaEngineState mState;
+   mozilla::ReentrantMonitor mMonitor; // Monitor for processing WebRTC frames.
+   SourceMediaStream* mSource;
+ 
+   int mFps; // Track rate (30 fps by default)
+   int mMinFps; // Min rate we want to accept
+   bool mInitDone;
+   bool mInSnapshotMode;
+   nsString* mSnapshotPath;
+@@ -143,25 +157,23 @@ class MediaEngineWebRTCAudioSource : pub
+ {
+ public:
+   MediaEngineWebRTCAudioSource(webrtc::VoiceEngine* voiceEngine, int aIndex,
+     const char* name, const char* uuid)
+     : mVoiceEngine(voiceEngine)
+     , mMonitor("WebRTCMic.Monitor")
+     , mCapIndex(aIndex)
+     , mChannel(-1)
+-    , mInitDone(false)
+-    , mState(kReleased) {
+-
++    , mInitDone(false) {
++    mState = kReleased;
+     mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
+     mDeviceName.Assign(NS_ConvertUTF8toUTF16(name));
+     mDeviceUUID.Assign(NS_ConvertUTF8toUTF16(uuid));
+     mInitDone = true;
+   }
+-
+   ~MediaEngineWebRTCAudioSource() { Shutdown(); }
+ 
+   virtual void GetName(nsAString&);
+   virtual void GetUUID(nsAString&);
+ 
+   virtual nsresult Allocate();
+   virtual nsresult Deallocate();
+   virtual nsresult Start(SourceMediaStream*, TrackID);
+@@ -187,46 +199,53 @@ private:
+   webrtc::VoEExternalMedia* mVoERender;
+ 
+   mozilla::ReentrantMonitor mMonitor;
+ 
+   int mCapIndex;
+   int mChannel;
+   TrackID mTrackID;
+   bool mInitDone;
+-  MediaEngineState mState;
++  //MediaEngineState mState;
+ 
+   nsString mDeviceName;
+   nsString mDeviceUUID;
+ 
+   SourceMediaStream* mSource;
+ };
+ 
+ class MediaEngineWebRTC : public MediaEngine
+ {
+ public:
+   MediaEngineWebRTC()
+   : mVideoEngine(NULL)
+   , mVoiceEngine(NULL)
+   , mVideoEngineInit(false)
+-  , mAudioEngineInit(false) {}
+-
++  , mAudioEngineInit(false) {
++    mVideoSources.Init();
++    mAudioSources.Init();
++  }
+   ~MediaEngineWebRTC() { Shutdown(); }
+ 
+   // Clients should ensure to clean-up sources video/audio sources
+   // before invoking Shutdown on this class.
+   void Shutdown();
+ 
+   virtual void EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >*);
+   virtual void EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >*);
+ 
+ private:
+   webrtc::VideoEngine* mVideoEngine;
+   webrtc::VoiceEngine* mVoiceEngine;
+ 
+   // Need this to avoid unneccesary WebRTC calls while enumerating.
+   bool mVideoEngineInit;
+   bool mAudioEngineInit;
++
++  // Store devices we've already seen in a hashtable for quick return.
++  // Maps UUID to MediaEngineSource (one set for audio, one for video).
++  nsRefPtrHashtable<nsStringHashKey, MediaEngineWebRTCVideoSource > mVideoSources;
++  nsRefPtrHashtable<nsStringHashKey, MediaEngineWebRTCAudioSource > mAudioSources;
+ };
+ 
+ }
+ 
+ #endif /* NSMEDIAENGINEWEBRTC_H_ */
+diff --git a/content/media/webrtc/MediaEngineWebRTCVideo.cpp b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
+--- a/content/media/webrtc/MediaEngineWebRTCVideo.cpp
++++ b/content/media/webrtc/MediaEngineWebRTCVideo.cpp
+@@ -9,39 +9,16 @@
+ 
+ namespace mozilla {
+ 
+ /**
+  * Webrtc video source.
+  */
+ NS_IMPL_THREADSAFE_ISUPPORTS1(MediaEngineWebRTCVideoSource, nsIRunnable)
+ 
+-MediaEngineWebRTCVideoSource::MediaEngineWebRTCVideoSource(webrtc::VideoEngine* aVideoEnginePtr,
+-                                                           int aIndex, int aMinFps)
+-  : mVideoEngine(aVideoEnginePtr)
+-  , mCaptureIndex(aIndex)
+-  , mCapabilityChosen(false)
+-  , mWidth(640)
+-  , mHeight(480)
+-  , mState(kReleased)
+-  , mMonitor("WebRTCCamera.Monitor")
+-  , mFps(DEFAULT_VIDEO_FPS)
+-  , mMinFps(aMinFps)
+-  , mInitDone(false)
+-  , mInSnapshotMode(false)
+-  , mSnapshotPath(NULL)
+-{
+-  Init();
+-}
+-
+-MediaEngineWebRTCVideoSource::~MediaEngineWebRTCVideoSource()
+-{
+-  Shutdown();
+-}
+-
+ // ViEExternalRenderer Callback.
+ int
+ MediaEngineWebRTCVideoSource::FrameSizeChange(
+    unsigned int w, unsigned int h, unsigned int streams)
+ {
+   mWidth = w;
+   mHeight = h;
+   return 0;
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -422,41 +422,71 @@ public:
+     mDevice = aDevice;
+     mDeviceChosen = true;
+     return NS_OK;
+   }
+ 
+   nsresult
+   SelectDevice()
+   {
++    bool found = false;
+     uint32_t count;
+     if (mPicture || mVideo) {
+       nsTArray<nsRefPtr<MediaEngineVideoSource> > videoSources;
+       mBackend->EnumerateVideoDevices(&videoSources);
+ 
+       count = videoSources.Length();
+       if (count <= 0) {
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+           mSuccess, mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+         ));
+         return NS_ERROR_FAILURE;
+       }
+-      mDevice = new MediaDevice(videoSources[0]);
++
++      // Pick the first available device.
++      for (uint32_t i = 0; i < count; i++) {
++        nsRefPtr<MediaEngineVideoSource> vSource = videoSources[i];
++        if (vSource->IsAvailable()) {
++          found = true;
++          mDevice = new MediaDevice(videoSources[i]);
++        }
++      }
++
++      if (!found) {
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(
++          mSuccess, mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
++        ));
++        return NS_ERROR_FAILURE;
++      }
+     } else {
+       nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
+       mBackend->EnumerateAudioDevices(&audioSources);
+ 
+       count = audioSources.Length();
+       if (count <= 0) {
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+           mSuccess, mError, NS_LITERAL_STRING("NO_DEVICES_FOUND"), mWindowID
+         ));
+         return NS_ERROR_FAILURE;
+       }
+-      mDevice = new MediaDevice(audioSources[0]);
++
++      for (uint32_t i = 0; i < count; i++) {
++        nsRefPtr<MediaEngineAudioSource> aSource = audioSources[i];
++        if (aSource->IsAvailable()) {
++          found = true;
++          mDevice = new MediaDevice(audioSources[i]);
++        }
++      }
++
++      if (!found) {
++        NS_DispatchToMainThread(new ErrorCallbackRunnable(
++          mSuccess, mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
++        ));
++        return NS_ERROR_FAILURE;
++      }
+     }
+ 
+     return NS_OK;
+   }
+ 
+   /**
+    * Allocates a video or audio device and returns a MediaStream via
+    * a GetUserMediaStreamRunnable. Runs off the main thread.
+@@ -554,21 +584,33 @@ public:
+ 
+     nsTArray<nsRefPtr<MediaEngineAudioSource> > audioSources;
+     manager->GetBackend()->EnumerateAudioDevices(&audioSources);
+     audioCount = videoSources.Length();
+ 
+     nsTArray<nsCOMPtr<nsIMediaDevice> > *devices =
+       new nsTArray<nsCOMPtr<nsIMediaDevice> >;
+ 
++    /**
++     * We only display available devices in the UI for now. We can easily
++     * change this later, when we implement a more sophisticated UI that
++     * lets the user revoke a device currently held by another tab (or
++     * we decide to provide a stream from a device already allocated).
++     */
+     for (i = 0; i < videoCount; i++) {
+-      devices->AppendElement(new MediaDevice(videoSources[i]));
++      nsRefPtr<MediaEngineVideoSource> vSource = videoSources[i];
++      if (vSource->IsAvailable()) {
++        devices->AppendElement(new MediaDevice(vSource));
++      }
+     }
+     for (i = 0; i < audioCount; i++) {
+-      devices->AppendElement(new MediaDevice(audioSources[i]));
++      nsRefPtr<MediaEngineAudioSource> aSource = audioSources[i];
++      if (aSource->IsAvailable()) {
++        devices->AppendElement(new MediaDevice(aSource));
++      }
+     }
+ 
+     NS_DispatchToMainThread(new DeviceSuccessCallbackRunnable(
+       mSuccess, mError, *devices
+     ));
+     return NS_OK;
+   }
+ 
