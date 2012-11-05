@@ -1,0 +1,38 @@
+# HG changeset patch
+# Parent 7ffe1745bf096b136147414df885128f18843c10
+
+diff --git a/browser/modules/webrtcUI.jsm b/browser/modules/webrtcUI.jsm
+--- a/browser/modules/webrtcUI.jsm
++++ b/browser/modules/webrtcUI.jsm
+@@ -57,24 +57,27 @@ function prompt(aBrowser, aCallID, aAudi
+       case "video":
+         if (aVideoRequested)
+           videoDevices.push(device);
+         break;
+     }
+   }
+ 
+   let requestType;
+-  if (audioDevices.length && videoDevices.length)
++  if (audioDevices.length && videoDevices.length) {
+     requestType = "shareCameraAndMicrophone";
+-  else if (audioDevices.length)
++  } else if (audioDevices.length) {
+     requestType = "shareMicrophone";
+-  else if (videoDevices.length)
++  } else if (videoDevices.length) {
+     requestType = "shareCamera";
+-  else
++  } else {
++    // If no devices are available, automatically deny the request
++    Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
+     return;
++  }
+ 
+   let host = aBrowser.contentDocument.documentURIObject.asciiHost;
+   let chromeWin = aBrowser.ownerDocument.defaultView;
+   let stringBundle = chromeWin.gNavigatorBundle;
+   let message = stringBundle.getFormattedString("getUserMedia." + requestType + ".message",
+                                                 [ host ]);
+ 
+   let mainAction = {

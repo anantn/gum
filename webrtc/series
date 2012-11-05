@@ -1,4 +1,6 @@
 denyall
+nodevice
+mdcrash
 arraymem
 memleak
 main_thread

@@ -1,6 +1,116 @@
 # HG changeset patch
 # Parent 35ba50a6a97e3df90392394bc177fa6e2941ce90
 
+diff --git a/browser/base/content/pageinfo/pageInfo.xul b/browser/base/content/pageinfo/pageInfo.xul
+--- a/browser/base/content/pageinfo/pageInfo.xul
++++ b/browser/base/content/pageinfo/pageInfo.xul
+@@ -47,24 +47,26 @@
+ 
+     <!-- permissions tab -->
+     <command id="cmd_imageDef"      oncommand="onCheckboxClick('image');"/>
+     <command id="cmd_popupDef"      oncommand="onCheckboxClick('popup');"/>
+     <command id="cmd_cookieDef"     oncommand="onCheckboxClick('cookie');"/>
+     <command id="cmd_installDef"    oncommand="onCheckboxClick('install');"/>
+     <command id="cmd_fullscreenDef" oncommand="onCheckboxClick('fullscreen');"/>
+     <command id="cmd_geoDef"        oncommand="onCheckboxClick('geo');"/>
++    <command id="cmd_getUserMediaDef" oncommand="onCheckboxClick('getUserMedia');"/>
+     <command id="cmd_indexedDBDef"  oncommand="onCheckboxClick('indexedDB');"/>
+     <command id="cmd_pluginsDef"    oncommand="onCheckboxClick('plugins');"/>
+     <command id="cmd_imageToggle"   oncommand="onRadioClick('image');"/>
+     <command id="cmd_popupToggle"   oncommand="onRadioClick('popup');"/>
+     <command id="cmd_cookieToggle"  oncommand="onRadioClick('cookie');"/>
+     <command id="cmd_installToggle" oncommand="onRadioClick('install');"/>
+     <command id="cmd_fullscreenToggle" oncommand="onRadioClick('fullscreen');"/>
+     <command id="cmd_geoToggle"     oncommand="onRadioClick('geo');"/>
++    <command id="cmd_getUserMediaToggle" oncommand="onRadioClick('getUserMedia');"/>
+     <command id="cmd_indexedDBToggle" oncommand="onRadioClick('indexedDB');"/>
+     <command id="cmd_pluginsToggle" oncommand="onRadioClick('plugins');"/>
+   </commandset>
+ 
+   <keyset id="pageInfoKeySet">
+     <key key="&closeWindow.key;" modifiers="accel" command="cmd_close"/>
+     <key keycode="VK_ESCAPE"                       command="cmd_close"/>
+ #ifdef XP_MACOSX
+@@ -346,16 +348,28 @@
+             <checkbox id="geoDef" command="cmd_geoDef" label="&permAskAlways;"/>
+             <spacer flex="1"/>
+             <radiogroup id="geoRadioGroup" orient="horizontal">
+               <radio id="geo#1" command="cmd_geoToggle" label="&permAllow;"/>
+               <radio id="geo#2" command="cmd_geoToggle" label="&permBlock;"/>
+             </radiogroup>
+           </hbox>
+         </vbox>
++        <vbox class="permission" id="permGetUserMediaRow" >
++          <label class="permissionLabel" id="permGetUserMediaLabel"
++                 value="&permGetUserMedia;" control="getUserMediaRadioGroup"/>
++          <hbox id="permGetUserMediaBox" role="group" aria-labelledby="permGetUserMediaLabel">
++            <checkbox id="getUserMediaDef" command="cmd_getUserMediaDef" label="&permAskAlways;"/>
++            <spacer flex="1"/>
++            <radiogroup id="getUserMediaRadioGroup" orient="horizontal">
++              <radio id="getUserMedia#1" command="cmd_getUserMediaToggle" label="&permAllow;"/>
++              <radio id="getUserMedia#2" command="cmd_getUserMediaToggle" label="&permBlock;"/>
++            </radiogroup>
++          </hbox>
++        </vbox>
+         <vbox class="permission" id="permIndexedDBRow">
+           <label class="permissionLabel" id="permIndexedDBLabel"
+                  value="&permIndexedDB;" control="indexedDBRadioGroup"/>
+           <hbox id="permIndexedDBBox" role="group" aria-labelledby="permIndexedDBLabel">
+             <checkbox id="indexedDBDef" command="cmd_indexedDBDef" label="&permUseDefault;"/>
+             <spacer flex="1"/>
+             <radiogroup id="indexedDBRadioGroup" orient="horizontal">
+               <!-- Ask and Allow are purposefully reversed here! -->
+diff --git a/browser/base/content/pageinfo/permissions.js b/browser/base/content/pageinfo/permissions.js
+--- a/browser/base/content/pageinfo/permissions.js
++++ b/browser/base/content/pageinfo/permissions.js
+@@ -44,16 +44,20 @@ var gPermObj = {
+     catch (e) {
+     }
+     return BLOCK;
+   },
+   geo: function getGeoDefaultPermissions()
+   {
+     return BLOCK;
+   },
++  getUserMedia: function getGetUserMediaDefaultPermissions()
++  {
++    return BLOCK;
++  },
+   indexedDB: function getIndexedDBDefaultPermissions()
+   {
+     return UNKNOWN;
+   },
+   plugins: function getPluginsDefaultPermissions()
+   {
+     if (gPrefs.getBoolPref("plugins.click_to_play"))
+       return BLOCK;
+@@ -116,19 +120,23 @@ function initRow(aPartId)
+   if (aPartId == "plugins" && !gPrefs.getBoolPref("plugins.click_to_play"))
+     document.getElementById("permPluginsRow").hidden = true;
+ 
+   var permissionManager = Components.classes[PERMISSION_CONTRACTID]
+                                     .getService(nsIPermissionManager);
+ 
+   var checkbox = document.getElementById(aPartId + "Def");
+   var command  = document.getElementById("cmd_" + aPartId + "Toggle");
+-  // Geolocation permission consumers use testExactPermission, not testPermission. 
+-  var perm = aPartId == "geo" ? permissionManager.testExactPermission(gPermURI, aPartId) :
+-                                permissionManager.testPermission(gPermURI, aPartId);
++
++  // Geolocation and getUserMedia permission consumers use testExactPermission, not testPermission.
++  var perm = permissionManager.testPermission(gPermURI, aPartId);
++  if (aPartId == "geo" || aPartId == "getUserMedia") {
++    perm = permissionManager.testExactPermission(gPermURI, aPartId);
++  }
++
+   if (perm) {
+     checkbox.checked = false;
+     command.removeAttribute("disabled");
+   }
+   else {
+     checkbox.checked = true;
+     command.setAttribute("disabled", "true");
+     perm = gPermObj[aPartId]();
 diff --git a/browser/components/preferences/aboutPermissions.js b/browser/components/preferences/aboutPermissions.js
 --- a/browser/components/preferences/aboutPermissions.js
 +++ b/browser/components/preferences/aboutPermissions.js
@@ -23,7 +133,7 @@ diff --git a/browser/components/preferences/aboutPermissions.js b/browser/compon
    this.host = host;
    this.listitem = null;
  
-@@ -292,16 +292,27 @@ let PermissionDefaults = {
+@@ -292,16 +292,26 @@ let PermissionDefaults = {
      // there is no global ALLOW.
      return this.UNKNOWN;
    },
@@ -33,14 +143,13 @@ diff --git a/browser/components/preferences/aboutPermissions.js b/browser/compon
    },
  
 +  get getUserMedia() {
-+    if (!Services.prefs.getBoolPref("media.navgiator.enabled")) {
++    if (!Services.prefs.getBoolPref("media.navigator.enabled")) {
 +      return this.DENY;
 +    }
 +    return this.UNKNOWN;
 +  },
 +  set getUserMedia(aValue) {
-+    let value = (aValue != this.DENY);
-+    Services.prefs.getBoolPref("media.navigator.enabled", value);
++    // Global enabling of getUserMedia is not allowed.
 +  },
 +
    get indexedDB() {
@@ -51,7 +160,7 @@ diff --git a/browser/components/preferences/aboutPermissions.js b/browser/compon
      // site, so there is no global ALLOW.
      return this.UNKNOWN;
    },
-@@ -375,22 +386,22 @@ let AboutPermissions = {
+@@ -375,22 +385,22 @@ let AboutPermissions = {
  
    /**
     * This reflects the permissions that we expose in the UI. These correspond
@@ -76,7 +185,7 @@ diff --git a/browser/components/preferences/aboutPermissions.js b/browser/compon
  
    _stringBundle: Services.strings.
                   createBundle("chrome://browser/locale/preferences/aboutPermissions.properties"),
-@@ -405,16 +416,17 @@ let AboutPermissions = {
+@@ -405,16 +415,17 @@ let AboutPermissions = {
  
      this.enumerateServicesGenerator = this.getEnumerateServicesGenerator();
      setTimeout(this.enumerateServicesDriver.bind(this), this.LIST_BUILD_DELAY);
@@ -149,6 +258,27 @@ diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/l
  getUserMedia.denyRequest.accesskey = D
 +getUserMedia.denyAllRequest.label = Never share with this site
 +getUserMedia.denyAllRequest.accesskey = N
+diff --git a/browser/locales/en-US/chrome/browser/pageInfo.dtd b/browser/locales/en-US/chrome/browser/pageInfo.dtd
+--- a/browser/locales/en-US/chrome/browser/pageInfo.dtd
++++ b/browser/locales/en-US/chrome/browser/pageInfo.dtd
+@@ -58,16 +58,17 @@
+ <!ENTITY  permAllowSession      "Allow for Session">
+ <!ENTITY  permBlock             "Block">
+ <!ENTITY  permissionsFor        "Permissions for:">
+ <!ENTITY  permImage             "Load Images">
+ <!ENTITY  permPopup             "Open Pop-up Windows">
+ <!ENTITY  permCookie            "Set Cookies">
+ <!ENTITY  permInstall           "Install Extensions or Themes">
+ <!ENTITY  permGeo               "Share Location">
++<!ENTITY  permGetUserMedia      "Share Camera or Microphone">
+ <!ENTITY  permPlugins           "Activate Plugins">
+ <!ENTITY  permFullscreen        "Enter Fullscreen">
+ 
+ <!ENTITY  permIndexedDB              "Maintain Offline Storage">
+ <!ENTITY  permClearStorage           "Clear Storage">
+ <!ENTITY  permClearStorage.accesskey "C">
+ 
+ <!ENTITY  securityTab           "Security">
 diff --git a/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd b/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
 --- a/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
 +++ b/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
