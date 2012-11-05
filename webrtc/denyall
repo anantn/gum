@@ -1,0 +1,502 @@
+# HG changeset patch
+# Parent 35ba50a6a97e3df90392394bc177fa6e2941ce90
+
+diff --git a/browser/components/preferences/aboutPermissions.js b/browser/components/preferences/aboutPermissions.js
+--- a/browser/components/preferences/aboutPermissions.js
++++ b/browser/components/preferences/aboutPermissions.js
+@@ -33,17 +33,17 @@ let gVisitStmt = gPlacesDatabase.createA
+                   "SELECT SUM(visit_count) AS count " +
+                   "FROM moz_places " +
+                   "WHERE rev_host = :rev_host");
+ 
+ /**
+  * Permission types that should be tested with testExactPermission, as opposed
+  * to testPermission. This is based on what consumers use to test these permissions.
+  */
+-let TEST_EXACT_PERM_TYPES = ["geo"];
++let TEST_EXACT_PERM_TYPES = ["geo", "getUserMedia"];
+ 
+ /**
+  * Site object represents a single site, uniquely identified by a host.
+  */
+ function Site(host) {
+   this.host = host;
+   this.listitem = null;
+ 
+@@ -292,16 +292,27 @@ let PermissionDefaults = {
+     // there is no global ALLOW.
+     return this.UNKNOWN;
+   },
+   set geo(aValue) {
+     let value = (aValue != this.DENY);
+     Services.prefs.setBoolPref("geo.enabled", value);
+   },
+ 
++  get getUserMedia() {
++    if (!Services.prefs.getBoolPref("media.navgiator.enabled")) {
++      return this.DENY;
++    }
++    return this.UNKNOWN;
++  },
++  set getUserMedia(aValue) {
++    let value = (aValue != this.DENY);
++    Services.prefs.getBoolPref("media.navigator.enabled", value);
++  },
++
+   get indexedDB() {
+     if (!Services.prefs.getBoolPref("dom.indexedDB.enabled")) {
+       return this.DENY;
+     }
+     // We always ask for permission to enable indexedDB storage for a specific
+     // site, so there is no global ALLOW.
+     return this.UNKNOWN;
+   },
+@@ -375,22 +386,22 @@ let AboutPermissions = {
+ 
+   /**
+    * This reflects the permissions that we expose in the UI. These correspond
+    * to permission type strings in the permission manager, PermissionDefaults,
+    * and element ids in aboutPermissions.xul.
+    *
+    * Potential future additions: "sts/use", "sts/subd"
+    */
+-  _supportedPermissions: ["password", "cookie", "geo", "indexedDB", "popup", "plugins", "fullscreen"],
++  _supportedPermissions: ["password", "cookie", "geo", "getUserMedia", "indexedDB", "popup", "plugins", "fullscreen"],
+ 
+   /**
+    * Permissions that don't have a global "Allow" option.
+    */
+-  _noGlobalAllow: ["geo", "indexedDB", "fullscreen"],
++  _noGlobalAllow: ["geo", "getUserMedia", "indexedDB", "fullscreen"],
+ 
+   /**
+    * Permissions that don't have a global "Deny" option.
+    */
+   _noGlobalDeny: ["plugins"],
+ 
+   _stringBundle: Services.strings.
+                  createBundle("chrome://browser/locale/preferences/aboutPermissions.properties"),
+@@ -405,16 +416,17 @@ let AboutPermissions = {
+ 
+     this.enumerateServicesGenerator = this.getEnumerateServicesGenerator();
+     setTimeout(this.enumerateServicesDriver.bind(this), this.LIST_BUILD_DELAY);
+ 
+     // Attach observers in case data changes while the page is open.
+     Services.prefs.addObserver("signon.rememberSignons", this, false);
+     Services.prefs.addObserver("network.cookie.", this, false);
+     Services.prefs.addObserver("geo.enabled", this, false);
++    Services.prefs.addObserver("navigator.media.enabled", this, false);
+     Services.prefs.addObserver("dom.indexedDB.enabled", this, false);
+     Services.prefs.addObserver("dom.disable_open_during_load", this, false);
+     Services.prefs.addObserver("plugins.click_to_play", this, false);
+     Services.prefs.addObserver("full-screen-api.enabled", this, false);
+ 
+     Services.obs.addObserver(this, "perm-changed", false);
+     Services.obs.addObserver(this, "passwordmgr-storage-changed", false);
+     Services.obs.addObserver(this, "cookie-changed", false);
+diff --git a/browser/components/preferences/aboutPermissions.xul b/browser/components/preferences/aboutPermissions.xul
+--- a/browser/components/preferences/aboutPermissions.xul
++++ b/browser/components/preferences/aboutPermissions.xul
+@@ -108,16 +108,37 @@
+                 <menuitem id="geo-1" value="1" label="&permission.allow;"/>
+                 <menuitem id="geo-2" value="2" label="&permission.block;"/>
+               </menupopup>
+             </menulist>
+           </hbox>
+         </vbox>
+       </hbox>
+ 
++      <!-- getUserMedia -->
++      <hbox id="getUserMedia-pref-item"
++            class="pref-item" align="top">
++        <image class="pref-icon" type="getUserMedia"/>
++        <vbox>
++          <label class="pref-title" value="&getUserMedia.label;"/>
++          <hbox>
++            <menulist id="getUserMedia-menulist"
++                      class="pref-menulist"
++                      type="getUserMedia"
++                      oncommand="AboutPermissions.onPermissionCommand(event);">
++              <menupopup>
++                <menuitem id="getUserMedia-0" value="0" label="&permission.alwaysAsk;"/>
++                <menuitem id="getUserMedia-1" value="1" label="&permission.allow;"/>
++                <menuitem id="getUserMedia-2" value="2" label="&permission.block;"/>
++              </menupopup>
++            </menulist>
++          </hbox>
++        </vbox>
++      </hbox>
++
+       <!-- Cookies -->
+       <hbox id="cookie-pref-item"
+             class="pref-item" align="top">
+         <image class="pref-icon" type="cookie"/>
+         <vbox>
+           <label class="pref-title" value="&cookie.label;"/>
+           <hbox align="center">
+             <menulist id="cookie-menulist"
+diff --git a/browser/locales/en-US/chrome/browser/browser.properties b/browser/locales/en-US/chrome/browser/browser.properties
+--- a/browser/locales/en-US/chrome/browser/browser.properties
++++ b/browser/locales/en-US/chrome/browser/browser.properties
+@@ -440,8 +440,10 @@ getUserMedia.shareMicrophone.message = W
+ getUserMedia.shareMicrophone.label = Share Microphone
+ getUserMedia.shareMicrophone.accesskey = S
+ getUserMedia.shareSpecificMicrophone.label = Share Microphone: %S
+ getUserMedia.shareCameraAndMicrophone.message = Would you like to share your camera and microphone with %S?
+ getUserMedia.shareCameraAndMicrophone.label = Share Camera and Microphone
+ getUserMedia.shareCameraAndMicrophone.accesskey = S
+ getUserMedia.denyRequest.label = Don't Share
+ getUserMedia.denyRequest.accesskey = D
++getUserMedia.denyAllRequest.label = Never share with this site
++getUserMedia.denyAllRequest.accesskey = N
+diff --git a/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd b/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
+--- a/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
++++ b/browser/locales/en-US/chrome/browser/preferences/aboutPermissions.dtd
+@@ -27,16 +27,17 @@
+ <!ENTITY password.manage                 "Manage Passwords…">
+ 
+ <!ENTITY cookie.label                    "Set Cookies">
+ <!ENTITY cookie.remove                   "Remove Cookies">
+ <!ENTITY cookie.manage                   "Manage Cookies…">
+ <!ENTITY cookie.removeAll                "Remove All Cookies">
+ 
+ <!ENTITY geo.label                       "Share Location">
++<!ENTITY getUserMedia.label              "Share Camera and Microphone">
+ 
+ <!ENTITY plugins.label                   "Plugins">
+ 
+ <!-- LOCALIZATION NOTE (indexedDB.label): This is describing indexedDB storage
+      using the same language used for the permIndexedDB string in browser/pageInfo.dtd -->
+ <!ENTITY indexedDB.label                 "Maintain Offline Storage">
+ 
+ <!ENTITY popup.label                     "Open Pop-up Windows">
+diff --git a/browser/modules/webrtcUI.jsm b/browser/modules/webrtcUI.jsm
+--- a/browser/modules/webrtcUI.jsm
++++ b/browser/modules/webrtcUI.jsm
+@@ -101,22 +101,26 @@ function prompt(aBrowser, aCallID, aAudi
+                  [ device.name ]),
+         accessKey: selectableDeviceNumber,
+         callback: function () {
+           Services.obs.notifyObservers(actual_device, "getUserMedia:response:allow", aCallID);
+         }
+       });
+     }
+   }
+-  secondaryActions.push({
+-    label: stringBundle.getString("getUserMedia.denyRequest.label"),
+-    accessKey: stringBundle.getString("getUserMedia.denyRequest.accesskey"),
+-    callback: function () {
+-      Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
+-    }
++  ["deny", "denyAll"].forEach(function(deny) {
++    secondaryActions.push({
++      label: stringBundle.getString("getUserMedia." + deny + "Request.label"),
++      accessKey: stringBundle.getString("getUserMedia." + deny + "Request.accesskey"),
++      callback: function () {
++        Services.obs.notifyObservers(
++          aBrowser.contentDocument.documentURIObject, "getUserMedia:response:" + deny, aCallID
++        );
++      }
++    });
+   });
+ 
+   let options = {
+   };
+ 
+   chromeWin.PopupNotifications.show(aBrowser, "webRTC-shareDevices", message,
+                                     "webRTC-notification-icon", mainAction,
+                                     secondaryActions, options);
+diff --git a/browser/themes/gnomestripe/preferences/aboutPermissions.css b/browser/themes/gnomestripe/preferences/aboutPermissions.css
+--- a/browser/themes/gnomestripe/preferences/aboutPermissions.css
++++ b/browser/themes/gnomestripe/preferences/aboutPermissions.css
+@@ -74,16 +74,19 @@
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ .pref-icon[type="cookie"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="geo"] {
+   list-style-image: url(chrome://browser/skin/Geolocation-64.png);
+ }
++.pref-icon[type="getUsermedia"] {
++  list-style-image: url(chrome://global/skin/icons/question-64.png);
++}
+ .pref-icon[type="indexedDB"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="install"] {
+   list-style-image: url(chrome://mozapps/skin/extensions/extensionGeneric.png);
+ }
+ .pref-icon[type="popup"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+diff --git a/browser/themes/pinstripe/preferences/aboutPermissions.css b/browser/themes/pinstripe/preferences/aboutPermissions.css
+--- a/browser/themes/pinstripe/preferences/aboutPermissions.css
++++ b/browser/themes/pinstripe/preferences/aboutPermissions.css
+@@ -84,16 +84,19 @@
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ .pref-icon[type="cookie"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="geo"] {
+   list-style-image: url(chrome://browser/skin/Geolocation-64.png);
+ }
++.pref-icon[type="getUserMedia"] {
++  list-style-image: url(chrome://global/skin/icons/question-64.png);
++}
+ .pref-icon[type="indexedDB"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="install"] {
+   list-style-image: url(chrome://mozapps/skin/extensions/extensionGeneric.png);
+ }
+ .pref-icon[type="popup"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+diff --git a/browser/themes/winstripe/preferences/aboutPermissions.css b/browser/themes/winstripe/preferences/aboutPermissions.css
+--- a/browser/themes/winstripe/preferences/aboutPermissions.css
++++ b/browser/themes/winstripe/preferences/aboutPermissions.css
+@@ -77,16 +77,19 @@
+   list-style-image: url(chrome://mozapps/skin/passwordmgr/key-64.png);
+ }
+ .pref-icon[type="cookie"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="geo"] {
+   list-style-image: url(chrome://browser/skin/Geolocation-64.png);
+ }
++.pref-icon[type="getUsermedia"] {
++  list-style-image: url(chrome://global/skin/icons/question-64.png);
++}
+ .pref-icon[type="indexedDB"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+ }
+ .pref-icon[type="install"] {
+   list-style-image: url(chrome://mozapps/skin/extensions/extensionGeneric.png);
+ }
+ .pref-icon[type="popup"] {
+   list-style-image: url(chrome://global/skin/icons/question-64.png);
+diff --git a/dom/media/MediaManager.cpp b/dom/media/MediaManager.cpp
+--- a/dom/media/MediaManager.cpp
++++ b/dom/media/MediaManager.cpp
+@@ -3,16 +3,17 @@
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "MediaManager.h"
+ 
+ #include "MediaStreamGraph.h"
+ #include "nsIDOMFile.h"
+ #include "nsIEventTarget.h"
+ #include "nsIUUIDGenerator.h"
++#include "nsIPermissionManager.h"
+ #include "nsIScriptGlobalObject.h"
+ #include "nsIPopupWindowManager.h"
+ 
+ // For PR_snprintf
+ #include "prprf.h"
+ 
+ #include "nsJSUtils.h"
+ #include "nsDOMFile.h"
+@@ -544,31 +545,31 @@ public:
+   ProcessGetUserMedia(MediaEngineSource* aAudioSource, MediaEngineSource* aVideoSource)
+   {
+     nsresult rv;
+     if (aAudioSource) {
+       rv = aAudioSource->Allocate();
+       if (NS_FAILED(rv)) {
+         LOG(("Failed to allocate audiosource %d",rv));
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+-                                  mSuccess, mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
+-                                                          ));
++          mSuccess, mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
++        ));
+         return;
+       }
+     }
+     if (aVideoSource) {
+       rv = aVideoSource->Allocate();
+       if (NS_FAILED(rv)) {
+         LOG(("Failed to allocate videosource %d\n",rv));
+         if (aAudioSource) {
+           aAudioSource->Deallocate();
+         }
+         NS_DispatchToMainThread(new ErrorCallbackRunnable(
+           mSuccess, mError, NS_LITERAL_STRING("HARDWARE_UNAVAILABLE"), mWindowID
+-                                                          ));
++        ));
+         return;
+       }
+     }
+ 
+     NS_DispatchToMainThread(new GetUserMediaStreamRunnable(
+       mSuccess, mError, mListeners, mWindowID, aAudioSource, aVideoSource
+     ));
+     return;
+@@ -743,17 +744,17 @@ MediaManager::GetUserMedia(bool aPrivile
+     if (audio && !type.EqualsLiteral("audio")) {
+       return NS_ERROR_FAILURE;
+     }
+   }
+   if (videodevice) {
+     nsString type;
+     videodevice->GetType(type);
+     if ((picture || video) && !type.EqualsLiteral("video")) {
+-        return NS_ERROR_FAILURE;
++      return NS_ERROR_FAILURE;
+     }
+   }
+ 
+   // We only support "front" or "back". TBD: Send to GetUserMediaRunnable.
+   nsString cameraType;
+   rv = aParams->GetCamera(cameraType);
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+@@ -819,44 +820,57 @@ MediaManager::GetUserMedia(bool aPrivile
+    *
+    * If a fake stream was requested, we force the use of the default backend.
+    */
+   if (fake) {
+     // Fake stream from default backend.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, onSuccess.forget(), onError.forget(), listeners,
+       windowID, new MediaEngineDefault()
+-                                           );
++    );
+   } else if (audiodevice || videodevice) {
+     // Stream from provided device.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID,
+       static_cast<MediaDevice*>(audiodevice.get()),
+       static_cast<MediaDevice*>(videodevice.get())
+-                                           );
++    );
+   } else {
+     // Stream from default device from WebRTC backend.
+     gUMRunnable = new GetUserMediaRunnable(
+       audio, video, picture, onSuccess.forget(), onError.forget(), listeners,
+       windowID
+-                                           );
++    );
+   }
+ 
+ #ifdef ANDROID
+   if (picture) {
+     // ShowFilePickerForMimeType() must run on the Main Thread! (on Android)
+     NS_DispatchToMainThread(gUMRunnable);
+   }
+   // XXX No support for Audio or Video in Android yet
+ #else
+   // XXX No full support for picture in Desktop yet (needs proper UI)
+   if (aPrivileged || fake) {
+     mMediaThread->Dispatch(gUMRunnable, NS_DISPATCH_NORMAL);
+   } else {
++    // Check if this site was previously blacklisted by the user.
++    nsCOMPtr<nsIPermissionManager> permManager =
++      do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
++
++    uint32_t perm = nsIPermissionManager::DENY_ACTION;
++    rv = permManager->TestExactPermissionFromPrincipal(
++      aWindow->GetExtantDoc()->NodePrincipal(), PERMISSION_GUM, &perm);
++
++    if (perm == nsIPermissionManager::DENY_ACTION) {
++      gUMRunnable->Denied();
++      return NS_OK;
++    }
++
+     // Ask for user permission, and dispatch runnable (or not) when a response
+     // is received via an observer notification. Each call is paired with its
+     // runnable by a GUID.
+     nsresult rv;
+     nsCOMPtr<nsIUUIDGenerator> uuidgen =
+       do_GetService("@mozilla.org/uuid-generator;1", &rv);
+     NS_ENSURE_SUCCESS(rv, rv);
+ 
+@@ -968,16 +982,17 @@ MediaManager::Observe(nsISupports* aSubj
+ {
+   NS_ASSERTION(NS_IsMainThread(), "Observer invoked off the main thread");
+   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+ 
+   if (!strcmp(aTopic, "xpcom-shutdown")) {
+     obs->RemoveObserver(this, "xpcom-shutdown");
+     obs->RemoveObserver(this, "getUserMedia:response:allow");
+     obs->RemoveObserver(this, "getUserMedia:response:deny");
++    obs->RemoveObserver(this, "getUserMedia:response:denyAll");
+ 
+     // Close off any remaining active windows.
+     {
+       MutexAutoLock lock(mMutex);
+       GetActiveWindows()->Clear();
+       mActiveCallbacks.Clear();
+       sSingleton = nullptr;
+     }
+@@ -1012,17 +1027,29 @@ MediaManager::Observe(nsISupports* aSubj
+       }
+     }
+ 
+     // Reuse the same thread to save memory.
+     mMediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
+     return NS_OK;
+   }
+ 
+-  if (!strcmp(aTopic, "getUserMedia:response:deny")) {
++  const char* denyString = "getUserMedia:response:deny";
++  if (!strncmp(aTopic, denyString, strlen(denyString))) {
++    NS_ASSERTION(aSubject, "getUserMedia denyAll without host URI in subject");
++
++    if (!strcmp(aTopic, "getUserMedia:response:denyAll")) {
++      nsCOMPtr<nsIPermissionManager> permManager =
++        do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
++
++      nsCOMPtr<nsIURI> uri = do_QueryInterface(aSubject);
++      permManager->Add(uri, PERMISSION_GUM,
++        nsIPermissionManager::DENY_ACTION, nsIPermissionManager::EXPIRE_NEVER, 0);
++    }
++
+     nsString key(aData);
+     nsRefPtr<nsRunnable> runnable;
+     if (!mActiveCallbacks.Get(key, getter_AddRefs(runnable))) {
+       return NS_OK;
+     }
+     mActiveCallbacks.Remove(key);
+ 
+     GetUserMediaRunnable* gUMRunnable =
+diff --git a/dom/media/MediaManager.h b/dom/media/MediaManager.h
+--- a/dom/media/MediaManager.h
++++ b/dom/media/MediaManager.h
+@@ -20,16 +20,18 @@ namespace mozilla {
+ 
+ #ifdef PR_LOGGING
+ extern PRLogModuleInfo* GetMediaManagerLog();
+ #define MM_LOG(msg) PR_LOG(GetMediaManagerLog(), PR_LOG_DEBUG, msg)
+ #else
+ #define MM_LOG(msg)
+ #endif
+ 
++#define PERMISSION_GUM "getUserMedia"
++
+ // We only support 1 audio and 1 video track for now.
+ enum {
+   kVideoTrack = 1,
+   kAudioTrack = 2
+ };
+ 
+ class GetUserMediaNotificationEvent: public nsRunnable
+ {
+@@ -278,16 +280,17 @@ public:
+       NS_NewThread(getter_AddRefs(sSingleton->mMediaThread));
+       MM_LOG(("New Media thread for gum"));
+ 
+       NS_ASSERTION(NS_IsMainThread(), "Only create MediaManager on main thread");
+       nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+       obs->AddObserver(sSingleton, "xpcom-shutdown", false);
+       obs->AddObserver(sSingleton, "getUserMedia:response:allow", false);
+       obs->AddObserver(sSingleton, "getUserMedia:response:deny", false);
++      obs->AddObserver(sSingleton, "getUserMedia:response:denyAll", false);
+     }
+     return sSingleton;
+   }
+   static nsIThread* GetThread() {
+     return Get()->mMediaThread;
+   }
+ 
+   NS_DECL_ISUPPORTS
